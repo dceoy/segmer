@@ -3,7 +3,7 @@
 'Segment Detector for differentially methylated regions in methylome data
 
 Usage:
-  segmet.R preproc [--debug] [--platform=<std>] [--filter] [--out=<dir>]
+  segmet.R preproc [--debug] [--platform=<std>] [--unfilter] [--out=<dir>]
   segmet.R [--debug] [--seed=<int>] [--cpus=<int>] [--in=<dir>] [--out=<dir>]
   segmet.R --version
   segmet.R -h|--help
@@ -15,7 +15,7 @@ Options:
   --debug           Run with debug logging
   --platform=<std>  Speciify a methylation assay platform [default: EPIC]
                     { EPIC, hm450, hm27 }
-  --filter          Filter probes with recommended masking
+  --unfilter        Skip recommended probe filtering
   --seed=<int>      Set a random seed
   --cpus=<int>      Limit CPU cores for multithreading
   --in=<dir>        Set an input directory [default: .]
@@ -54,7 +54,7 @@ main <- function(opts, root_dir = fetch_script_root()) {
   if (opts[['preproc']]) {
     write_probe_bed(dir = normalizePath(opts[['--out']]),
                     platform = opts[['--platform']],
-                    filtering = opts[['--filter']])
+                    unfilter = opts[['--unfilter']])
   } else {
     if (! is.null(opts[['--seed']])) {
       message('>>> Set a random seed')
@@ -77,12 +77,15 @@ main <- function(opts, root_dir = fetch_script_root()) {
   }
 }
 
-write_probe_bed <- function(dir, platform = 'EPIC', filtering = TRUE,
+write_probe_bed <- function(dir, platform = 'EPIC', unfilter = FALSE,
                             hg_ver = 'hg38') {
   message(str_c('>>> Download annotation data: ', platform))
   load_packages(pkgs = c('GenomicRanges', 'stringr', 'tidyverse'))
   rds_files <- fetch_epic_annotation(dir = dir)
-  if (filtering) {
+  if (unfilter) {
+    df_ann <- granges2tibble(readRDS(rds_files[2]), var = 'cg_id')
+    bed_name <- str_c(platform, hg_ver, 'bed', sep = '.')
+  } else {
     message('>>> Filter probes')
     masked_ids <- filter(granges2tibble(readRDS(rds_files[1]), var = 'cg_id'),
                          seqnames %in% c('chrX', 'chrY')
@@ -91,9 +94,6 @@ write_probe_bed <- function(dir, platform = 'EPIC', filtering = TRUE,
                      ! seqnames %in% c('chrX', 'chrY'),
                      ! cg_id %in% masked_ids)
     bed_name <- str_c(platform, hg_ver, 'filtered.bed', sep = '.')
-  } else {
-    df_ann <- granges2tibble(readRDS(rds_files[2]), var = 'cg_id')
-    bed_name <- str_c(platform, hg_ver, 'bed', sep = '.')
   }
   message('>>> Write a sorted probe BED')
   write_csv(mutate(select(df_ann, seqnames, start, end, cg_id),
