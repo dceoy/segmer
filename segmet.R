@@ -52,6 +52,7 @@ main <- function(opts, root_dir = fetch_script_root()) {
   }
 
   if (opts[['preproc']]) {
+    load_packages(pkgs = c('GenomicRanges', 'stringr', 'tidyverse'))
     write_probe_bed(dir = normalizePath(opts[['--out']]),
                     platform = opts[['--platform']],
                     unfilter = opts[['--unfilter']])
@@ -79,14 +80,14 @@ main <- function(opts, root_dir = fetch_script_root()) {
 
 write_probe_bed <- function(dir, platform = 'EPIC', unfilter = FALSE,
                             hg_ver = 'hg38') {
-  message(str_c('>>> Download annotation data: ', platform))
-  load_packages(pkgs = c('GenomicRanges', 'stringr', 'tidyverse'))
-  rds_files <- fetch_epic_annotation(dir = dir)
+  rds_files <- download_annotation_data(dir = dir)
   if (unfilter) {
     df_ann <- granges2tibble(readRDS(rds_files[2]), var = 'cg_id')
     bed_name <- str_c(platform, hg_ver, 'bed', sep = '.')
   } else {
     message('>>> Filter probes')
+    lapply(c('chrX', 'chrY', 'MASK_general', 'MASK_snp5_common'),
+           function(i) message(str_c('- ', i)))
     masked_ids <- filter(granges2tibble(readRDS(rds_files[1]), var = 'cg_id'),
                          seqnames %in% c('chrX', 'chrY')
                          | MASK_general | MASK_snp5_common)$cg_id
@@ -95,12 +96,12 @@ write_probe_bed <- function(dir, platform = 'EPIC', unfilter = FALSE,
                      ! cg_id %in% masked_ids)
     bed_name <- str_c(platform, hg_ver, 'filtered.bed', sep = '.')
   }
-  message('>>> Write a sorted probe BED')
+  out_csv_path <- file.path(dir, bed_name)
+  message(str_c('>>> Write a sorted probe BED:\t', out_csv_path))
   write_csv(mutate(select(df_ann, seqnames, start, end, cg_id),
                    start = start - 1,
                    end = end - 1),
-            path = file.path(dir, bed_name),
-            col_names = FALSE)
+            path = out_csv_path, col_names = FALSE)
 }
 
 load_packages <- function(pkgs) {
@@ -108,16 +109,15 @@ load_packages <- function(pkgs) {
   print(suppressMessages(sapply(pkgs, library, character.only = TRUE)))
 }
 
-fetch_epic_annotation <- function(dir = '.', platform = 'EPIC',
-                                  hg_ver = 'hg38', gencode_ver = 'v22',
-                                  release_date = '20180909') {
+download_annotation_data <- function(dir = '.', platform = 'EPIC',
+                                     hg_ver = 'hg38', gencode_ver = 'v22') {
   urls <- sapply(c(str_c(platform, hg_ver, 'manifest.rds', sep = '.'),
                    str_c(platform, hg_ver, 'manifest.gencode',
                          gencode_ver,
                          'rds', sep = '.')),
                  function(f) {
-                   return(file.path('https://zwdzwd.io/InfiniumAnnotation',
-                                    release_date, platform, f))
+                   return(file.path('http://zwdzwd.io/InfiniumAnnotation',
+                                    'current', platform, f))
                  })
   dsts <- sapply(names(urls),
                  function(f) return(file.path(dir, f)))
@@ -126,7 +126,7 @@ fetch_epic_annotation <- function(dir = '.', platform = 'EPIC',
            src <- urls[f]
            dst <- dsts[f]
            if (! file.exists(dst)) {
-             message(str_c('Download:\t', src, ' => ', dst))
+             message(str_c('>>> Download:\t', src, ' => ', dst))
              download.file(src, dst)
            }
          })
