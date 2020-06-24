@@ -1,0 +1,16 @@
+---
+version: '3'
+
+services:
+  segmet:
+    container_name: segmet
+    build:
+      context: .
+    image: dceoy/segmet:latest
+    user: ${UID}:${GID}
+    userns_mode: host
+    volumes:
+      - ${PWD}:/wd
+    working_dir: /wd
+    entrypoint:
+      - /usr/local/bin/segmet
