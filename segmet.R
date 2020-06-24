@@ -59,24 +59,21 @@ main <- function(opts, root_dir = fetch_script_root()) {
   if (opts[['--debug']]) {
     print(opts)
   }
-
-  if (opts[['bed']]) {
-    load_packages(pkgs = c('GenomicRanges', 'stringr', 'tidyverse'))
-  } else if (opts[['segment']]) {
-    load_packages(pkgs = c('changepoint', 'stringr', 'tidyverse'))
-  } else {
-    load_packages(pkgs = c('stringr', 'tidyverse'))
-  }
-
-  if (! is.null(opts[['--out']])) {
-    make_dir(path = opts[['--out']])
-  }
-
   if (! is.null(opts[['--seed']])) {
     message('>>> Set a random seed')
     set.seed(opts[['--seed']])
     message(opts[['--seed']])
   }
+
+  if (opts[['bed']]) {
+    add_pkgs <- 'GenomicRanges'
+  } else if (opts[['segment']]) {
+    add_pkgs <- 'changepoint'
+  } else {
+    add_pkgs <- NULL
+  }
+  load_packages(pkgs = c('tidyverse', add_pkgs))
+  make_dir(path = opts[['--out']])
 
   if (opts[['bed']]) {
     write_probe_bed(dst_dir = normalizePath(opts[['--out']]),
@@ -85,7 +82,7 @@ main <- function(opts, root_dir = fetch_script_root()) {
   } else if (opts[['segment']]) {
     write_segment_files(probe_bed = normalizePath(opts[['<probe_bed>']]),
                         met_csv = normalizePath(opts[['<met_csv>']]),
-                        dir = normalizePath(opts[['--out']]))
+                        dst_dir = normalizePath(opts[['--out']]))
   } else {
     n_cpu <- ifelse(is.null(opts[['--cpus']]),
                     parallel::detectCores(), as.integer(opts[['--cpus']]))
@@ -95,30 +92,39 @@ main <- function(opts, root_dir = fetch_script_root()) {
   }
 }
 
-write_segment_files <- function(probe_bed, met_csv, dir, method = 'PELT') {
+write_segment_files <- function(probe_bed, met_csv, dst_dir, method = 'PELT') {
   message('>>> Load data frames and calculate variance')
   df_var <- mutate(create_df_var(met_csv = met_csv, probe_bed = probe_bed),
                    sid = row_number())
   message('>>> Detect changepoints by ', method, ' method')
-  meanvar_pelt <- changepoint::cpt.meanvar(df_var$met_variance, method = 'PELT')
+  meanvar_pelt <- changepoint::cpt.meanvar(df_var$variance, method = 'PELT')
   summary(meanvar_pelt)
   cp_sids <- c(1, changepoint::cpts(meanvar_pelt))
   message('>>> Segment probes')
-  df_seg <- ungroup(summarize(group_by(fill(left_join(rename(df_var,
-                                                             cp_sid = sid),
-                                                      tibble(sid = cp_sids,
-                                                             cp_sid = cp_sids),
-                                                      by = 'cp_sid'),
-                                            sid),
-                                       chrom, sid),
-                              segment = str_c(unique(chrom), ':',
-                                              min(chromStart) + 1,
-                                              '-', max(chromEnd))))
+  df_seg <- summarize(group_by(fill(left_join(rename(df_var,
+                                                     cp_sid = sid),
+                                              tibble(sid = cp_sids,
+                                                     cp_sid = cp_sids),
+                                              by = 'cp_sid'),
+                                    sid),
+                               chrom, sid),
+                      segment = str_c(unique(chrom), ':',
+                                      min(chromStart) + 1,
+                                      '-', max(chromEnd)),
+                      .groups = 'drop')
   df_ann <- fill(left_join(select(df_var, -chromStart, -chromEnd),
                            df_seg,
                            by = c('chrom', 'sid')),
                  segment)
-  print(df_ann)
+  print(summary(summarize(group_by(df_ann, segment),
+                          probes_per_segment = n(),
+                          .groups = 'drop')))
+  out_csv <- file.path(dst_dir,
+                       str_c(sub('.csv(|.gz)$', '', basename(met_csv)),
+                             sub('.bed(|.gz)$', '', basename(probe_bed)),
+                             'csv', sep = '.'))
+  message('>>> Write a segment CSV file:\t', out_csv)
+  write_csv(df_ann, path = out_csv)
 }
 
 create_df_var <- function(met_csv, probe_bed) {
@@ -128,8 +134,8 @@ create_df_var <- function(met_csv, probe_bed) {
                    name = as.character(name))
   df_var <- inner_join(read_bed(bed = probe_bed),
                        mutate(select(df_met, name),
-                              met_variance = apply(select(df_met, -name),
-                                                   1, var)),
+                              variance = apply(select(df_met, -name),
+                                               1, var)),
                        by = 'name')
   stopifnot(nrow(df_met) > 1, ncol(df_met) > 4)
   message(ncol(df_var), ' sites are used.')
@@ -205,7 +211,7 @@ load_packages <- function(pkgs) {
 }
 
 make_dir <- function(path) {
-  if (! dir.exists(path)) {
+  if (! (is.null(path) | dir.exists(path))) {
     message('>>> Make a directory:\t', path)
     dir.create(path, mode = '0755')
   }
