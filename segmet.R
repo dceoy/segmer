@@ -3,9 +3,9 @@
 'Segment Detector for differentially methylated regions in methylome data
 
 Usage:
-  segmet.R bed [--debug] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmet.R segment [--debug] [--seed=<int>] [--out=<dir>] <probe_bed> <met_csv>
-  segmet.R [--debug] [--seed=<int>] [--cpus=<int>] [--out=<dir>]
+  segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
+  segmet.R segment [-v] [--seed=<int>] [--out=<dir>] <probe_bed> <met_csv>
+  segmet.R heatmap [-v] [--out=<dir>] [--k=<int>] <seg_csv> <met_csv>
   segmet.R --version
   segmet.R -h|--help
 
@@ -13,15 +13,16 @@ Commands:
   bed               Download annotation data and write a sorted probe BED file
   segment           Segment probes by sample variance
                     (Probes including NA are ignored.)
+  heatmap           Draw a heatmap using detected segments
 
 Options:
-  --debug           Run with debug logging
+  -v                Run with debug logging
   --platform=<str>  Specify a methylation assay platform [default: EPIC]
                       choice: EPIC, hm450, hm27
   --unfilter        Skip recommended probe filtering
   --seed=<int>      Set a random seed
-  --cpus=<int>      Limit CPU cores for multithreading
   --out=<dir>       Set an output directory [default: .]
+  --k=<int>         Specify the number of clusters [default: 3]
   --version         Print version and exit
   -h, --help        Print help and exit
 
@@ -30,6 +31,7 @@ Arguments:
   <met_csv>         Path to a methylation CSV file
                       the 1st column: probe names
                       the other columns: sample values (e.g., beta values)
+  <seg_csv>         Path to the CSV file created by `segmet segment`
 ' -> doc
 
 
@@ -56,7 +58,7 @@ fetch_script_root <- function() {
 
 main <- function(opts, root_dir = fetch_script_root()) {
   options(warn = 1)
-  if (opts[['--debug']]) {
+  if (opts[['-v']]) {
     print(opts)
   }
   if (! is.null(opts[['--seed']])) {
@@ -69,6 +71,8 @@ main <- function(opts, root_dir = fetch_script_root()) {
     add_pkgs <- 'GenomicRanges'
   } else if (opts[['segment']]) {
     add_pkgs <- 'changepoint'
+  } else if (opts[['heatmap']]) {
+    add_pkgs <- c('gplots', 'RColorBrewer')
   } else {
     add_pkgs <- NULL
   }
@@ -80,24 +84,91 @@ main <- function(opts, root_dir = fetch_script_root()) {
                     platform = opts[['--platform']],
                     unfilter = opts[['--unfilter']])
   } else if (opts[['segment']]) {
-    write_segment_files(probe_bed = normalizePath(opts[['<probe_bed>']]),
-                        met_csv = normalizePath(opts[['<met_csv>']]),
-                        dst_dir = normalizePath(opts[['--out']]))
-  } else {
-    n_cpu <- ifelse(is.null(opts[['--cpus']]),
-                    parallel::detectCores(), as.integer(opts[['--cpus']]))
-    message('>>> Show configurations')
-    message('Script directory path:       ', root_dir)
-    message('CPU cores:                   ', n_cpu)
+    write_segment_file(probe_bed = normalizePath(opts[['<probe_bed>']]),
+                       met_csv = normalizePath(opts[['<met_csv>']]),
+                       dst_dir = normalizePath(opts[['--out']]))
+  } else if (opts[['heatmap']]) {
+    draw_segment_heatmap(seg_csv =  normalizePath(opts[['<seg_csv>']]),
+                         met_csv = normalizePath(opts[['<met_csv>']]),
+                         dst_dir = normalizePath(opts[['--out']]),
+                         k = opts[['--k']],
+                         distfun = dist, hclustfun = ward_hclust,
+                         avg = 'median')
   }
 }
 
-write_segment_files <- function(probe_bed, met_csv, dst_dir, method = 'PELT') {
+draw_segment_heatmap <- function(seg_csv, met_csv, dst_dir, k = 3,
+                                 distfun = dist, hclustfun = hclust,
+                                 avg = 'median') {
+  out_prefix <- file.path(dst_dir,
+                          str_c(sub('.csv(|.gz)$', '', basename(seg_csv)),
+                                '.met.', avg))
+  message('>>> Load data frames and calculate ', avg, ' values by segment')
+  validate_input_files(paths = c('segment CSV' = seg_csv,
+                                 'methylation CSV' = met_csv))
+  df_segmet <- create_df_segmet(df_seg = read_csv_quietly(seg_csv),
+                                df_met = read_met_csv(met_csv),
+                                avg = avg)
+  segmet_csv <- str_c(out_prefix, 'csv', sep = '.')
+  message('>>> Write an segmental methylation CSV:\t', segmet_csv)
+  write_csv(df_segmet, path = segmet_csv)
+  cluster_csv <- str_c(out_prefix, '.', k, 'clusters.csv')
+  mt_segmet <- as.matrix(column_to_rownames(df_segmet, var = 'segment'))
+  hclust_labels <- stats::cutree(hclustfun(distfun(t(mt_segmet))), k = k)
+  message('>>> Write an observed cluster CSV:\t', cluster_csv)
+  write_csv(tibble(sample_id = names(hclust_labels),
+                   observed_cluster = hclust_labels),
+            path = cluster_csv)
+  heatmap_pdf <- str_c(out_prefix, '.', k, 'clusters.heatmap.pdf')
+  message('>>> Draw a heatmap:\t', heatmap_pdf)
+  to_pdf(heatmap_plot(mt = mt_segmet, col_labels = hclust_labels,
+                      distfun = distfun, hclustfun = hclustfun,
+                      margins = c(7, 5)),
+         path = heatmap_pdf)
+}
+
+create_df_segmet <- function(df_seg, df_met, avg) {
+  return(summarize_all(group_by(select(left_join(df_seg, df_met, by = 'name'),
+                                       -name, -chrom, -variance, -sid),
+                                segment),
+                       switch(avg,
+                              'median' = median,
+                              'mean' = mean),
+                       .groups = 'drop'))
+}
+
+heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
+                         ...) {
+  return(heatmap.2(mt,
+                   ColSideColors = brewer.pal(length(unique(col_labels)),
+                                              'Accent')[col_labels],
+                   scale = 'none', trace = 'none', density.info = 'none',
+                   col = col, ...))
+}
+
+ward_hclust <- function(...) {
+  return(hclust(..., method = 'ward.D2'))
+}
+
+to_pdf <- function(graph, path, w = 10, h = 10) {
+  if (file.exists(path)) {
+    file.remove(path)
+  }
+  pdf(path, width = w, height = h, onefile = FALSE)
+  graph
+  dev.off()
+}
+
+write_segment_file <- function(probe_bed, met_csv, dst_dir, method = 'PELT',
+                               ...) {
   message('>>> Load data frames and calculate variance')
-  df_var <- mutate(create_df_var(met_csv = met_csv, probe_bed = probe_bed),
-                   sid = row_number())
+  validate_input_files(paths = c('probe BED' = probe_bed,
+                                 'methylation CSV' = met_csv))
+  df_var <- create_df_var(df_met = read_met_csv(path = met_csv),
+                          df_probe = read_bed(path = probe_bed))
   message('>>> Detect changepoints by ', method, ' method')
-  meanvar_pelt <- changepoint::cpt.meanvar(df_var$variance, method = 'PELT')
+  meanvar_pelt <- changepoint::cpt.meanvar(df_var$variance, method = 'PELT',
+                                           ...)
   summary(meanvar_pelt)
   cp_sids <- c(1, changepoint::cpts(meanvar_pelt))
   message('>>> Segment probes')
@@ -122,33 +193,38 @@ write_segment_files <- function(probe_bed, met_csv, dst_dir, method = 'PELT') {
   out_csv <- file.path(dst_dir,
                        str_c(sub('.csv(|.gz)$', '', basename(met_csv)),
                              sub('.bed(|.gz)$', '', basename(probe_bed)),
-                             'csv', sep = '.'))
+                             'seg.csv', sep = '.'))
   message('>>> Write a segment CSV file:\t', out_csv)
   write_csv(df_ann, path = out_csv)
 }
 
-create_df_var <- function(met_csv, probe_bed) {
-  lapply(c(probe_bed, met_csv),
-         function(p) stopifnot(file.exists(p)))
-  df_met <- mutate(drop_na(rename(read_csv(met_csv), name = 1)),
+read_met_csv <- function(path) {
+  df_met <- mutate(drop_na(rename(read_csv_quietly(path), name = 1)),
                    name = as.character(name))
-  df_var <- inner_join(read_bed(bed = probe_bed),
-                       mutate(select(df_met, name),
-                              variance = apply(select(df_met, -name),
-                                               1, var)),
-                       by = 'name')
   stopifnot(nrow(df_met) > 1, ncol(df_met) > 4)
-  message(ncol(df_var), ' sites are used.')
-  return(df_var)
+  return(df_met)
 }
 
-read_bed <- function(bed) {
-  d <- read.table(bed, header = FALSE)[, 1:4]
+read_bed <- function(path) {
+  d <- read.table(path, header = FALSE)[, 1:4]
   return(arrange(rename(as_tibble(d),
-                        setNames(names(d),
-                                 c('chrom', 'chromStart', 'chromEnd',
-                                   'name'))),
+                        set_names(names(d),
+                                  c('chrom', 'chromStart', 'chromEnd',
+                                    'name'))),
                  chrom, chromStart, chromEnd))
+}
+
+create_df_var <- function(df_met, df_probe) {
+  df_var <- inner_join(df_probe,
+                       mutate(select(df_met, name),
+                              variance = apply(select(df_met, -name),
+                                               1,
+                                               function(v) {
+                                                 return(var(v))
+                                               })),
+                       by = 'name')
+  message(nrow(df_var), ' sites are used.')
+  return(mutate(df_var, sid = row_number()))
 }
 
 write_probe_bed <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
@@ -159,8 +235,8 @@ write_probe_bed <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
     bed_name <- str_c(platform, hg_ver, 'bed', sep = '.')
   } else {
     message('>>> Filter probes')
-    lapply(c('chrX', 'chrY', 'MASK_general', 'MASK_snp5_common'),
-           function(i) message('- ', i))
+    walk(c('chrX', 'chrY', 'MASK_general', 'MASK_snp5_common'),
+         function(i) message('- ', i))
     masked_ids <- filter(granges2tibble(readRDS(rds_files[1]), var = 'cg_id'),
                          seqnames %in% c('chrX', 'chrY')
                          | MASK_general | MASK_snp5_common)$cg_id
@@ -179,26 +255,20 @@ write_probe_bed <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
 
 download_annotation_data <- function(dst_dir = '.', platform = 'EPIC',
                                      hg_ver = 'hg38', gencode_ver = 'v22') {
-  urls <- sapply(c(str_c(platform, hg_ver, 'manifest.rds', sep = '.'),
-                   str_c(platform, hg_ver, 'manifest.gencode',
-                         gencode_ver,
+  url_body <- file.path('http://zwdzwd.io/InfiniumAnnotation/current',
+                        platform)
+  return(map_chr(c(str_c(platform, hg_ver, 'manifest.rds', sep = '.'),
+                   str_c(platform, hg_ver, 'manifest.gencode', gencode_ver,
                          'rds', sep = '.')),
-                 function(f) {
-                   return(file.path('http://zwdzwd.io/InfiniumAnnotation',
-                                    'current', platform, f))
-                 })
-  dsts <- sapply(names(urls),
-                 function(f) return(file.path(dst_dir, f)))
-  lapply(names(urls),
-         function(f) {
-           src <- urls[f]
-           dst <- dsts[f]
-           if (! file.exists(dst)) {
-             message('>>> Download:\t', src, ' => ', dst)
-             download.file(src, dst)
-           }
-         })
-  return(dsts)
+                 function(n) {
+                   src <- file.path(url_body, n)
+                   dst <- file.path(dst_dir, n)
+                   if (! file.exists(dst)) {
+                     message('>>> Download:\t', src, ' => ', dst)
+                     download.file(src, dst)
+                   }
+                   return(dst)
+                 }))
 }
 
 granges2tibble <- function(gr, var) {
@@ -215,6 +285,18 @@ make_dir <- function(path) {
     message('>>> Make a directory:\t', path)
     dir.create(path, mode = '0755')
   }
+}
+
+validate_input_files <- function(paths) {
+  walk2(names(paths), paths,
+        function(n, p) {
+          message(n, ':\t', p)
+          stopifnot(file.exists(p))
+        })
+}
+
+read_csv_quietly <- function(...) {
+  return(suppressMessages(read_csv(...)))
 }
 
 if (! interactive()) {
