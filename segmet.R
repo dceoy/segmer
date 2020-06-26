@@ -27,7 +27,6 @@ Options:
   --func=<name>     Specify an average function [default: median]
   --k=<int>         Specify the number of clusters [default: 3]
   --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0.5]
-                    (If cutoff == 0, all segments are used.)
   --version         Print version and exit
   -h, --help        Print help and exit
 
@@ -44,7 +43,7 @@ Arguments:
 ' -> doc
 
 
-script_version <- 'v0.0.1'
+script_version <- 'v0.1.0'
 
 fetch_script_root <- function() {
   ca <- commandArgs(trailingOnly = FALSE)
@@ -116,16 +115,17 @@ cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
   cluster_csv <- str_c(out_prefix, '.', k, 'clusters.csv')
   df_stats <- column_to_rownames(read_csv_quietly(stats_csv),
                                  var = 'segment')
-  mt_segmet <- as.matrix(filter(df_stats,
-                                apply(df_stats, 1, max) >=  cutoff))
-  hclust_labels <- stats::cutree(hclustfun(distfun(t(mt_segmet))), k = k)
+  mt_stats <- as.matrix(filter(df_stats,
+                               apply(df_stats, 1, max) >=  cutoff))
+  message('passing probes:\t', nrow(mt_stats), ' / ', nrow(df_stats))
+  hclust_labels <- stats::cutree(hclustfun(distfun(t(mt_stats))), k = k)
   message('>>> Write an observed cluster CSV:\t', cluster_csv)
   write_csv(tibble(sample_id = names(hclust_labels),
                    observed_cluster = hclust_labels),
             path = cluster_csv)
   heatmap_pdf <- str_c(out_prefix, '.', k, 'clusters.heatmap.pdf')
   message('>>> Draw a heatmap:\t', heatmap_pdf)
-  to_pdf(heatmap_plot(mt = mt_segmet, col_labels = hclust_labels,
+  to_pdf(heatmap_plot(mt = mt_stats, col_labels = hclust_labels,
                       distfun = distfun, hclustfun = hclustfun,
                       margins = c(5, 10)),
          path = heatmap_pdf)
@@ -236,25 +236,29 @@ read_bed <- function(path) {
 
 write_probe_bed <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
                             hg_ver = 'hg38') {
-  rds_files <- download_annotation_data(dst_dir = dst_dir)
+  ann_rds_list <- download_annotation_data(dst_dir = dst_dir)
+  df_gencode <- granges2tibble(readRDS(ann_rds_list$gencode), var = 'name')
   if (unfilter) {
-    df_ann <- granges2tibble(readRDS(rds_files[2]), var = 'cg_id')
+    df_ann <- df_gencode
+    message('probes:\t', nrow(df_ann))
     bed_name <- str_c(platform, hg_ver, 'bed', sep = '.')
   } else {
     message('>>> Filter probes')
     walk(c('chrX', 'chrY', 'MASK_general', 'MASK_snp5_common'),
          function(i) message('- ', i))
-    masked_ids <- filter(granges2tibble(readRDS(rds_files[1]), var = 'cg_id'),
+    masked_ids <- filter(granges2tibble(readRDS(ann_rds_list$mask),
+                                        var = 'name'),
                          seqnames %in% c('chrX', 'chrY')
-                         | MASK_general | MASK_snp5_common)$cg_id
-    df_ann <- filter(granges2tibble(readRDS(rds_files[2]), var = 'cg_id'),
+                         | MASK_general | MASK_snp5_common)$name
+    df_ann <- filter(df_gencode,
                      ! seqnames %in% c('chrX', 'chrY'),
-                     ! cg_id %in% masked_ids)
+                     ! name %in% masked_ids)
+    message('passing probes:\t', nrow(df_ann), ' / ', nrow(df_gencode))
     bed_name <- str_c(platform, hg_ver, 'filtered.bed', sep = '.')
   }
   out_csv <- file.path(dst_dir, bed_name)
   message('>>> Write a sorted probe BED file:\t', out_csv)
-  write_tsv(mutate(select(df_ann, seqnames, start, end, cg_id),
+  write_tsv(mutate(select(df_ann, seqnames, start, end, name),
                    start = start - 1,
                    end = end),
             path = out_csv, col_names = FALSE)
@@ -264,19 +268,22 @@ download_annotation_data <- function(dst_dir = '.', platform = 'EPIC',
                                      hg_ver = 'hg38', gencode_ver = 'v22') {
   url_body <- file.path('http://zwdzwd.io/InfiniumAnnotation/current',
                         platform)
-  return(map_chr(c(str_c(platform, hg_ver, 'manifest.rds', sep = '.'),
-                   str_c(platform, hg_ver, 'manifest.gencode', gencode_ver,
-                         'rds', sep = '.')),
-                 function(n) {
-                   src <- file.path(url_body, n)
-                   dst <- file.path(dst_dir, n)
-                   if (! file.exists(dst)) {
-                     message('>>> Download a file:\t', src)
-                     download.file(src, dst)
-                     message('saved:\t', dst)
-                   }
-                   return(dst)
-                 }))
+  return(lapply(c(mask = str_c(platform, hg_ver, 'manifest.rds', sep = '.'),
+                  gencode = str_c(platform, hg_ver, 'manifest.gencode',
+                                  gencode_ver, 'rds', sep = '.')),
+                function(n) {
+                  dst <- file.path(dst_dir, n)
+                  download_file(src = file.path(url_body, n), dst = dst)
+                  return(dst)
+                }))
+}
+
+download_file <- function(src, dst) {
+  if (! file.exists(dst)) {
+    message('>>> Download a file:\t', src)
+    download.file(src, dst)
+    message('saved:\t', dst)
+  }
 }
 
 granges2tibble <- function(gr, var) {
