@@ -26,7 +26,8 @@ Options:
   --out=<dir>       Set an output directory [default: .]
   --func=<name>     Specify an average function [default: median]
   --k=<int>         Specify the number of clusters [default: 3]
-  --cutoff=<dbl>    Specify the minimum cutoff for segmental values [default: 0]
+  --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0.5]
+                    (If cutoff == 0, all segments are used.)
   --version         Print version and exit
   -h, --help        Print help and exit
 
@@ -104,23 +105,19 @@ main <- function(opts, root_dir = fetch_script_root()) {
     cluster_segments(stats_csv =  normalizePath(opts[['<stats_csv>']]),
                      dst_dir = normalizePath(opts[['--out']]),
                      k = opts[['--k']],
-                     min_cutoff = as.numeric(opts[['--cutoff']]),
+                     cutoff = as.numeric(opts[['--cutoff']]),
                      distfun = dist, hclustfun = ward_hclust)
   }
 }
 
-cluster_segments <- function(stats_csv, dst_dir, k = 3, min_cutoff = 0,
+cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
                              distfun = dist, hclustfun = hclust) {
   out_prefix <- sub('.csv(|.gz)$', '', stats_csv)
   cluster_csv <- str_c(out_prefix, '.', k, 'clusters.csv')
   df_stats <- column_to_rownames(read_csv_quietly(stats_csv),
                                  var = 'segment')
-  if (min_cutoff > 0) {
-    mt_segmet <- as.matrix(filter(df_stats,
-                                  apply(df_stats, 1, max) >=  min_cutoff))
-  } else {
-    mt_segmet <- as.matrix(df_stats)
-  }
+  mt_segmet <- as.matrix(filter(df_stats,
+                                apply(df_stats, 1, max) >=  cutoff))
   hclust_labels <- stats::cutree(hclustfun(distfun(t(mt_segmet))), k = k)
   message('>>> Write an observed cluster CSV:\t', cluster_csv)
   write_csv(tibble(sample_id = names(hclust_labels),
