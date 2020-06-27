@@ -33,8 +33,8 @@ RUN set -e \
 
 RUN set -e \
       && clir update \
-      && clir install --devt=cran changepoint tidyverse \
+      && clir install --devt=cran changepoint gplots RColorBrewer tidyverse \
       && clir install --devt=bioc GenomicRanges \
-      && clir validate changepoint GenomicRanges tidyverse
+      && clir validate changepoint GenomicRanges gplots RColorBrewer tidyverse
 
 ENTRYPOINT ["/usr/local/bin/segmet"]

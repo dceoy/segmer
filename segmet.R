@@ -4,18 +4,21 @@
 
 Usage:
   segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmet.R segment [-v] [--seed=<int>] [--out=<dir>] <probe_bed> <met_csv>
-  segmet.R stats [-v] [--out=<dir>] [--func=<name>] <seg_csv> <met_csv>
-  segmet.R cluster [-v] [--out=<dir>] [--k=<int>] [--cutoff=<dbl>] <stats_csv>
+  segmet.R segment [-v] [--seed=<int>] [--out=<dir>] <site_bed> <met_csv>
+  segmet.R stats [-v] [--avgfun=<name>] [--out=<dir>] <seg_csv> <met_csv>
+  segmet.R cluster [-v] [--k=<int>] [--cutoff=<dbl>] [--out=<dir>] <stats_csv>
+  segmet.R pipeline [-v] [--platform=<str>] [--k=<int>] [--out=<dir>] <met_csv>
   segmet.R --version
   segmet.R -h|--help
 
 Commands:
-  bed               Download annotation data and write a sorted probe BED file
-  segment           Segment probes by sample variance.
-                    Probes including NA are ignored.
+  bed               Download annotation data and write a target site BED file
+  segment           Segment target sites by sample variance
+                    (Sites including NA are ignored.)
   stats             Calculate segmental methylation statistics
   cluster           Execute clustering and draw the heatmap
+  pipeline          Run the recommended pipeline of segmet
+                    (workflow: bed -> segment -> stats -> cluster)
 
 Options:
   -v                Run with debug logging
@@ -24,14 +27,14 @@ Options:
   --unfilter        Skip recommended probe filtering
   --seed=<int>      Set a random seed
   --out=<dir>       Set an output directory [default: .]
-  --func=<name>     Specify an average function [default: median]
+  --avgfun=<name>   Specify an average function [default: median]
   --k=<int>         Specify the number of clusters [default: 3]
   --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0.5]
   --version         Print version and exit
   -h, --help        Print help and exit
 
 Arguments:
-  <probe_bed>       Path to a probe BED file with IDs in the name column
+  <site_bed>        Path to a target site BED file with probe IDs as names
                     (created by `segmet bed`)
   <met_csv>         Path to a methylation CSV file
                       the 1st column: probe names
@@ -43,7 +46,7 @@ Arguments:
 ' -> doc
 
 
-script_version <- 'v0.1.0'
+script_version <- 'v0.0.2'
 
 fetch_script_root <- function() {
   ca <- commandArgs(trailingOnly = FALSE)
@@ -81,6 +84,8 @@ main <- function(opts, root_dir = fetch_script_root()) {
     add_pkgs <- 'changepoint'
   } else if (opts[['cluster']]) {
     add_pkgs <- c('gplots', 'RColorBrewer')
+  } else if (opts[['pipeline']]) {
+    add_pkgs <- c('changepoint', 'GenomicRanges', 'gplots', 'RColorBrewer')
   } else {
     add_pkgs <- NULL
   }
@@ -88,24 +93,35 @@ main <- function(opts, root_dir = fetch_script_root()) {
   make_dir(path = opts[['--out']])
 
   if (opts[['bed']]) {
-    write_probe_bed(dst_dir = normalizePath(opts[['--out']]),
-                    platform = opts[['--platform']],
-                    unfilter = opts[['--unfilter']])
+    prepare_site_bed(dst_dir = normalizePath(opts[['--out']]),
+                     platform = opts[['--platform']],
+                     unfilter = opts[['--unfilter']])
   } else if (opts[['segment']]) {
-    write_segment_files(probe_bed = normalizePath(opts[['<probe_bed>']]),
-                        met_csv = normalizePath(opts[['<met_csv>']]),
-                        dst_dir = normalizePath(opts[['--out']]))
+    segment_sites(site_bed = normalizePath(opts[['<site_bed>']]),
+                  met_csv = normalizePath(opts[['<met_csv>']]),
+                  dst_dir = normalizePath(opts[['--out']]))
   } else if (opts[['stats']]) {
     calculate_segment_stats(seg_csv = normalizePath(opts[['<seg_csv>']]),
                             met_csv = normalizePath(opts[['<met_csv>']]),
                             dst_dir = normalizePath(opts[['--out']]),
-                            avg = opts[['--func']])
+                            avg = opts[['--avgfun']])
   } else if (opts[['cluster']]) {
-    cluster_segments(stats_csv =  normalizePath(opts[['<stats_csv>']]),
+    cluster_segments(stats_csv = normalizePath(opts[['<stats_csv>']]),
                      dst_dir = normalizePath(opts[['--out']]),
                      k = opts[['--k']],
                      cutoff = as.numeric(opts[['--cutoff']]),
                      distfun = dist, hclustfun = ward_hclust)
+  } else if (opts[['pipeline']]) {
+    dst_dir <- normalizePath(opts[['--out']])
+    met_csv <- normalizePath(opts[['<met_csv>']])
+    site_bed <- prepare_site_bed(dst_dir = dst_dir,
+                                 platform = opts[['--platform']])
+    seg_csv <- segment_sites(site_bed = site_bed, met_csv = met_csv,
+                             dst_dir = dst_dir)
+    stats_csv <- calculate_segment_stats(seg_csv = seg_csv, met_csv = met_csv,
+                                         dst_dir = dst_dir)
+    cluster_segments(stats_csv = stats_csv, dst_dir = dst_dir,
+                     k = opts[['--k']])
   }
 }
 
@@ -117,7 +133,7 @@ cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
                                  var = 'segment')
   mt_stats <- as.matrix(filter(df_stats,
                                apply(df_stats, 1, max) >=  cutoff))
-  message('passing probes:\t', nrow(mt_stats), ' / ', nrow(df_stats))
+  message('passing segments:\t', nrow(mt_stats), ' / ', nrow(df_stats))
   hclust_labels <- stats::cutree(hclustfun(distfun(t(mt_stats))), k = k)
   message('>>> Write an observed cluster CSV:\t', cluster_csv)
   write_csv(tibble(sample_id = names(hclust_labels),
@@ -129,6 +145,7 @@ cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
                       distfun = distfun, hclustfun = hclustfun,
                       margins = c(5, 10)),
          path = heatmap_pdf)
+  return(c(cluster_csv, heatmap_pdf))
 }
 
 heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
@@ -167,14 +184,14 @@ calculate_segment_stats <- function(seg_csv, met_csv, dst_dir,
   stats_csv <- sub('.csv$', str_c('.met.', avg, '.csv'), seg_csv)
   message('>>> Write an segmental ', avg, ' CSV:\t', stats_csv)
   write_csv(df_stats, path = stats_csv)
+  return(stats_csv)
 }
 
-write_segment_files <- function(probe_bed, met_csv, dst_dir, method = 'PELT',
-                                ...) {
-  df_probe <- read_bed(path = probe_bed)
+segment_sites <- function(site_bed, met_csv, dst_dir, method = 'PELT', ...) {
+  df_site <- read_bed(path = site_bed)
   df_met <- read_met_csv(path = met_csv)
   message('>>> Calculate sample variances')
-  df_var <- mutate(inner_join(df_probe,
+  df_var <- mutate(inner_join(df_site,
                               mutate(select(df_met, name),
                                      variance = apply(select(df_met, -name),
                                                       1,
@@ -189,9 +206,9 @@ write_segment_files <- function(probe_bed, met_csv, dst_dir, method = 'PELT',
                                            ...)
   summary(meanvar_pelt)
   cp_sids <- c(1, changepoint::cpts(meanvar_pelt))
-  message('>>> Segment probes')
-  df_reg <- summarize(group_by(fill(left_join(rename(df_var,
-                                                     cp_sid = sid),
+  message('>>> Segment target sites')
+  df_reg <- summarize(group_by(fill(left_join(dplyr::rename(df_var,
+                                                            cp_sid = sid),
                                               tibble(sid = cp_sids,
                                                      cp_sid = cp_sids),
                                               by = 'cp_sid'),
@@ -206,18 +223,19 @@ write_segment_files <- function(probe_bed, met_csv, dst_dir, method = 'PELT',
                            by = c('chrom', 'sid')),
                  segment)
   print(summary(summarize(group_by(df_seg, segment),
-                          probes_per_segment = n(),
+                          sites_per_segment = n(),
                           .groups = 'drop')))
   seg_csv <- file.path(dst_dir,
                        str_c(sub('.csv(|.gz)$', '', basename(met_csv)),
-                             sub('.bed(|.gz)$', '', basename(probe_bed)),
+                             sub('.bed(|.gz)$', '', basename(site_bed)),
                              'seg.csv', sep = '.'))
   message('>>> Write a segment CSV file:\t', seg_csv)
   write_csv(df_seg, path = seg_csv)
+  return(seg_csv)
 }
 
 read_met_csv <- function(path) {
-  df_met <- mutate(drop_na(rename(read_csv_quietly(path), name = 1)),
+  df_met <- mutate(drop_na(dplyr::rename(read_csv_quietly(path), name = 1)),
                    name = as.character(name))
   stopifnot(nrow(df_met) > 1, ncol(df_met) > 4)
   return(df_met)
@@ -227,15 +245,12 @@ read_bed <- function(path) {
   message('>>> Read a BED file: ', path)
   stopifnot(file.exists(path))
   d <- read.table(path, header = FALSE)[, 1:4]
-  return(arrange(rename(as_tibble(d),
-                        set_names(names(d),
-                                  c('chrom', 'chromStart', 'chromEnd',
-                                    'name'))),
-                 chrom, chromStart, chromEnd))
+  names(d) <- c('chrom', 'chromStart', 'chromEnd', 'name')
+  return(arrange(as_tibble(d), chrom, chromStart, chromEnd))
 }
 
-write_probe_bed <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
-                            hg_ver = 'hg38') {
+prepare_site_bed <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
+                             hg_ver = 'hg38') {
   ann_rds_list <- download_annotation_data(dst_dir = dst_dir)
   df_gencode <- granges2tibble(readRDS(ann_rds_list$gencode), var = 'name')
   if (unfilter) {
@@ -256,12 +271,13 @@ write_probe_bed <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
     message('passing probes:\t', nrow(df_ann), ' / ', nrow(df_gencode))
     bed_name <- str_c(platform, hg_ver, 'filtered.bed', sep = '.')
   }
-  out_csv <- file.path(dst_dir, bed_name)
-  message('>>> Write a sorted probe BED file:\t', out_csv)
+  site_bed <- file.path(dst_dir, bed_name)
+  message('>>> Write a sorted target site BED file:\t', site_bed)
   write_tsv(mutate(select(df_ann, seqnames, start, end, name),
                    start = start - 1,
                    end = end),
-            path = out_csv, col_names = FALSE)
+            path = site_bed, col_names = FALSE)
+  return(site_bed)
 }
 
 download_annotation_data <- function(dst_dir = '.', platform = 'EPIC',
