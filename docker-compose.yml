@@ -6,6 +6,7 @@ services:
     container_name: segmet
     build:
       context: .
+      dockerfile: Dockerfile
     image: dceoy/segmet:latest
     user: ${UID}:${GID}
     userns_mode: host
