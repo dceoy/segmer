@@ -3,10 +3,11 @@ FROM ubuntu:latest
 ENV DEBIAN_FRONTEND noninteractive
 
 ADD https://raw.githubusercontent.com/dceoy/clir/master/install_clir.sh /tmp/install_clir.sh
-ADD segmet.R /usr/local/bin/segmet
+ADD segmet.R /usr/local/bin/segmet.R
 
 RUN set -e \
-      && ln -sf bash /bin/sh
+      && ln -sf bash /bin/sh \
+      && ln -s segmet.R /usr/local/bin/segmet
 
 RUN set -e \
       && apt-get -y update \
