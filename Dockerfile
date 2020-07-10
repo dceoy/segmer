@@ -20,10 +20,9 @@ RUN set -e \
       && apt-get -y update \
       && apt-get -y dist-upgrade \
       && apt-get -y install --no-install-recommends --no-install-suggests \
-        apt-transport-https apt-utils ca-certificates curl g++ gcc gfortran \
-        git make libbz2-dev libblas-dev libcurl4-gnutls-dev \
-        libjpeg-turbo8-dev libgit2-dev liblapack-dev liblzma-dev libpng-dev \
-        libssh-dev libssl-dev libxml2-dev r-base \
+        curl g++ gcc gfortran git make libblas-dev libbz2-dev \
+        libcurl4-gnutls-dev libgit2-dev libjpeg-turbo8-dev liblapack-dev \
+        liblzma-dev libpng-dev libssh-dev libssl-dev libxml2-dev r-base \
       && apt-get -y autoremove \
       && apt-get clean \
       && rm -rf /var/lib/apt/lists/*
