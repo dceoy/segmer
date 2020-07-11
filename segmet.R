@@ -139,7 +139,8 @@ cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
   write_csv(tibble(sample_id = names(hclust_labels),
                    observed_cluster = hclust_labels),
             path = cluster_csv)
-  heatmap_pdf <- str_c(out_prefix, '.', k, 'clusters.heatmap.pdf')
+  heatmap_pdf <- str_c(out_prefix, '.cutoff', as.integer(cutoff * 100),
+                       '.', k, 'clusters.heatmap.pdf')
   message('>>> Draw a heatmap:\t', heatmap_pdf)
   to_pdf(heatmap_plot(mt = mt_stats, col_labels = hclust_labels,
                       distfun = distfun, hclustfun = hclustfun,
