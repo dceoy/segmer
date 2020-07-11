@@ -5,9 +5,7 @@
 Usage:
   segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
   segmet.R segment [-v] [--seed=<int>] [--out=<dir>] <site_bed> <met_csv>
-  segmet.R stats [-v] [--avgfun=<name>] [--out=<dir>] <seg_csv> <met_csv>
   segmet.R cluster [-v] [--k=<int>] [--cutoff=<dbl>] [--out=<dir>] <stats_csv>
-  segmet.R pipeline [-v] [--platform=<str>] [--k=<int>] [--out=<dir>] <met_csv>
   segmet.R --version
   segmet.R -h|--help
 
@@ -15,10 +13,7 @@ Commands:
   bed               Download annotation data and write a target site BED file
   segment           Segment target sites by sample variance
                     (Sites including NA are ignored.)
-  stats             Calculate segmental methylation statistics
   cluster           Execute clustering and draw the heatmap
-  pipeline          Run the recommended pipeline of segmet
-                    (workflow: bed -> segment -> stats -> cluster)
 
 Options:
   -v                Run with debug logging
@@ -27,7 +22,6 @@ Options:
   --unfilter        Skip recommended probe filtering
   --seed=<int>      Set a random seed
   --out=<dir>       Set an output directory [default: .]
-  --avgfun=<name>   Specify an average function [default: median]
   --k=<int>         Specify the number of clusters [default: 3]
   --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0.5]
   --version         Print version and exit
@@ -39,14 +33,12 @@ Arguments:
   <met_csv>         Path to a methylation CSV file
                       the 1st column: probe names
                       the other columns: sample values (e.g., beta values)
-  <seg_csv>         Path to a segment CSV file
-                    (created by `segmet segment`)
   <stats_csv>       Path to a segmental methylation CSV file
-                    (created by `segmet stats`)
+                    (`*.seg.met.median.csv` created by `segmet stats`)
 ' -> doc
 
 
-script_version <- 'v0.0.2'
+script_version <- 'v0.0.3'
 
 fetch_script_root <- function() {
   ca <- commandArgs(trailingOnly = FALSE)
@@ -84,44 +76,30 @@ main <- function(opts, root_dir = fetch_script_root()) {
     add_pkgs <- 'changepoint'
   } else if (opts[['cluster']]) {
     add_pkgs <- c('gplots', 'RColorBrewer')
-  } else if (opts[['pipeline']]) {
-    add_pkgs <- c('changepoint', 'GenomicRanges', 'gplots', 'RColorBrewer')
   } else {
     add_pkgs <- NULL
   }
   load_packages(pkgs = c('tidyverse', add_pkgs))
   make_dir(path = opts[['--out']])
+  dsr_dir <- normalizePath(opts[['--out']])
 
   if (opts[['bed']]) {
-    prepare_site_bed(dst_dir = normalizePath(opts[['--out']]),
+    prepare_site_bed(dst_dir = dst_dir,
                      platform = opts[['--platform']],
                      unfilter = opts[['--unfilter']])
   } else if (opts[['segment']]) {
-    segment_sites(site_bed = normalizePath(opts[['<site_bed>']]),
-                  met_csv = normalizePath(opts[['<met_csv>']]),
-                  dst_dir = normalizePath(opts[['--out']]))
-  } else if (opts[['stats']]) {
-    calculate_segment_stats(seg_csv = normalizePath(opts[['<seg_csv>']]),
+    seg_csv <- segment_sites(site_bed = normalizePath(opts[['<site_bed>']]),
+                             met_csv = normalizePath(opts[['<met_csv>']]),
+                             dst_dir = dst_dir)
+    calculate_segment_stats(seg_csv = seg_csv,
                             met_csv = normalizePath(opts[['<met_csv>']]),
-                            dst_dir = normalizePath(opts[['--out']]),
-                            avg = opts[['--avgfun']])
+                            dst_dir = dst_dir)
   } else if (opts[['cluster']]) {
     cluster_segments(stats_csv = normalizePath(opts[['<stats_csv>']]),
-                     dst_dir = normalizePath(opts[['--out']]),
+                     dst_dir = dst_dir,
                      k = opts[['--k']],
                      cutoff = as.numeric(opts[['--cutoff']]),
                      distfun = dist, hclustfun = ward_hclust)
-  } else if (opts[['pipeline']]) {
-    dst_dir <- normalizePath(opts[['--out']])
-    met_csv <- normalizePath(opts[['<met_csv>']])
-    site_bed <- prepare_site_bed(dst_dir = dst_dir,
-                                 platform = opts[['--platform']])
-    seg_csv <- segment_sites(site_bed = site_bed, met_csv = met_csv,
-                             dst_dir = dst_dir)
-    stats_csv <- calculate_segment_stats(seg_csv = seg_csv, met_csv = met_csv,
-                                         dst_dir = dst_dir)
-    cluster_segments(stats_csv = stats_csv, dst_dir = dst_dir,
-                     k = opts[['--k']])
   }
 }
 
