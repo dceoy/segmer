@@ -4,8 +4,8 @@
 
 Usage:
   segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmet.R segment [-v] [--seed=<int>] [--avgfun=<str>] [--out=<dir>]
-                    <site_bed> <met_csv>
+  segmet.R segment [-v] [--seed=<int>] [--cpstat=<str>] [--avgfun=<str>]
+                   [--out=<dir>] <site_bed> <met_csv>
   segmet.R cluster [-v] [--k=<int>] [--cutoff=<dbl>] [--dist=<str>]
                    [--hclust=<str>] [--ar=<ratio>] [--out=<dir>] <stats_csv>
   segmet.R --version
@@ -24,6 +24,7 @@ Options:
   --unfilter        Skip recommended probe filtering
   --out=<dir>       Set an output directory [default: .]
   --seed=<int>      Set a random seed
+  --cpstat=<str>    Specify the statistic for changepoint [default: meanvar]
   --avgfun=<str>    Specify the function for segment average [default: median]
   --k=<int>         Specify the number of clusters [default: 3]
   --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0.5]
@@ -96,7 +97,7 @@ main <- function(opts, root_dir = fetch_script_root()) {
   } else if (opts[['segment']]) {
     seg_csv <- segment_sites(site_bed = normalizePath(opts[['<site_bed>']]),
                              met_csv = normalizePath(opts[['<met_csv>']]),
-                             dst_dir = dst_dir)
+                             dst_dir = dst_dir, cpstat = opts[['--cpstat']])
     calculate_segment_stats(seg_csv = seg_csv,
                             met_csv = normalizePath(opts[['<met_csv>']]),
                             dst_dir = dst_dir, avg = opts[['--avgfun']])
@@ -177,7 +178,9 @@ calculate_segment_stats <- function(seg_csv, met_csv, dst_dir,
   return(stats_csv)
 }
 
-segment_sites <- function(site_bed, met_csv, dst_dir, method = 'PELT', ...) {
+segment_sites <- function(site_bed, met_csv, dst_dir, cpstat = 'meanvar',
+                          method = 'PELT', ...) {
+  cptfun <- eval(parse(text = str_c('changepoint::cpt.', cpstat)))
   df_site <- read_bed(path = site_bed)
   df_met <- read_met_csv(path = met_csv)
   message('>>> Calculate sample variances')
@@ -192,10 +195,9 @@ segment_sites <- function(site_bed, met_csv, dst_dir, method = 'PELT', ...) {
                    sid = row_number())
   message(nrow(df_var), ' sites are used.')
   message('>>> Detect changepoints by ', method, ' method')
-  meanvar_pelt <- changepoint::cpt.meanvar(df_var$variance, method = 'PELT',
-                                           ...)
-  summary(meanvar_pelt)
-  cp_sids <- c(1, changepoint::cpts(meanvar_pelt))
+  cpt <- cptfun(df_var$variance, method = method, ...)
+  summary(cpt)
+  cp_sids <- c(1, changepoint::cpts(cpt))
   message('>>> Segment target sites')
   df_reg <- summarize(group_by(fill(left_join(dplyr::rename(df_var,
                                                             cp_sid = sid),
@@ -218,7 +220,7 @@ segment_sites <- function(site_bed, met_csv, dst_dir, method = 'PELT', ...) {
   seg_csv <- file.path(dst_dir,
                        str_c(sub('.csv(|.gz)$', '', basename(met_csv)),
                              sub('.bed(|.gz)$', '', basename(site_bed)),
-                             'seg.csv', sep = '.'))
+                             cpstat, 'seg.csv', sep = '.'))
   message('>>> Write a segment CSV file:\t', seg_csv)
   write_csv(df_seg, path = seg_csv)
   return(seg_csv)
