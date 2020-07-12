@@ -5,7 +5,8 @@
 Usage:
   segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
   segmet.R segment [-v] [--seed=<int>] [--out=<dir>] <site_bed> <met_csv>
-  segmet.R cluster [-v] [--k=<int>] [--cutoff=<dbl>] [--out=<dir>] <stats_csv>
+  segmet.R cluster [-v] [--k=<int>] [--cutoff=<dbl>] [--dist=<str>]
+                   [--hclust=<str>] [--ar=<ratio>] [--out=<dir>] <stats_csv>
   segmet.R --version
   segmet.R -h|--help
 
@@ -24,6 +25,9 @@ Options:
   --out=<dir>       Set an output directory [default: .]
   --k=<int>         Specify the number of clusters [default: 3]
   --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0.5]
+  --dist=<str>      Specify the method of stats::dist [default: euclidean]
+  --hclust=<str>    Specify the method of stats::hclust [default: ward.D2]
+  --ar=<ratio>      Specify the aspect ratio of figures [default: 13:8]
   --version         Print version and exit
   -h, --help        Print help and exit
 
@@ -95,18 +99,28 @@ main <- function(opts, root_dir = fetch_script_root()) {
                             met_csv = normalizePath(opts[['<met_csv>']]),
                             dst_dir = dst_dir)
   } else if (opts[['cluster']]) {
+    aspect_ratio <- as.integer(str_split(opts[['--ar']], pattern = ':',
+                                         n = 2, simplify = TRUE))
     cluster_segments(stats_csv = normalizePath(opts[['<stats_csv>']]),
-                     dst_dir = dst_dir,
-                     k = opts[['--k']],
+                     dst_dir = dst_dir, k = opts[['--k']],
                      cutoff = as.numeric(opts[['--cutoff']]),
-                     distfun = dist, hclustfun = ward_hclust)
+                     dist_method = opts[['--dist']],
+                     hclust_method = opts[['--hclust']],
+                     width = aspect_ratio[1], height = aspect_ratio[2])
   }
 }
 
 cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
-                             distfun = dist, hclustfun = hclust) {
-  out_prefix <- sub('.csv(|.gz)$', '', stats_csv)
-  cluster_csv <- str_c(out_prefix, '.', k, 'clusters.csv')
+                             dist_method = 'euclidean',
+                             hclust_method = 'ward.D2', width = 13,
+                             height = 8) {
+  distfun <- function(...) return(dist(..., method = dist_method))
+  hclustfun <- function(...) return(hclust(..., method = hclust_method))
+  out_prefix <- str_c(sub('.csv(|.gz)$', '', stats_csv),
+                      dist_method, hclust_method,
+                      str_c('co', as.integer(cutoff * 100)),
+                      str_c('k', k), sep = '.')
+  cluster_csv <- str_c(out_prefix, '.csv')
   df_stats <- column_to_rownames(read_csv_quietly(stats_csv),
                                  var = 'segment')
   mt_stats <- as.matrix(filter(df_stats,
@@ -117,13 +131,12 @@ cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
   write_csv(tibble(sample_id = names(hclust_labels),
                    observed_cluster = hclust_labels),
             path = cluster_csv)
-  heatmap_pdf <- str_c(out_prefix, '.cutoff', as.integer(cutoff * 100),
-                       '.', k, 'clusters.heatmap.pdf')
+  heatmap_pdf <- str_c(out_prefix, '.heatmap.pdf')
   message('>>> Draw a heatmap:\t', heatmap_pdf)
   to_pdf(heatmap_plot(mt = mt_stats, col_labels = hclust_labels,
                       distfun = distfun, hclustfun = hclustfun,
                       margins = c(5, 10)),
-         path = heatmap_pdf)
+         path = heatmap_pdf, w = width, h = height)
   return(c(cluster_csv, heatmap_pdf))
 }
 
@@ -134,10 +147,6 @@ heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
                                               'Accent')[col_labels],
                    scale = 'none', trace = 'none', density.info = 'none',
                    col = col, ...))
-}
-
-ward_hclust <- function(...) {
-  return(hclust(..., method = 'ward.D2'))
 }
 
 to_pdf <- function(graph, path, w = 10, h = 10) {
@@ -305,5 +314,6 @@ read_csv_quietly <- function(path, ...) {
 
 if (! interactive()) {
   library('docopt', quietly = TRUE)
-  main(opts = docopt::docopt(doc, version = script_version))
+  main(opts = docopt::docopt(gsub('\\]\n +\\[', '] [', doc),
+                             version = script_version))
 }

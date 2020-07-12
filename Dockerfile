@@ -23,7 +23,7 @@ RUN set -e \
       && rm -rf /var/lib/apt/lists/*
 
 RUN set -e \
-      && bash /tmp/install_clir.sh --root --delete-r-lib \
+      && bash /tmp/install_clir.sh --root --force --delete-r-lib \
       && rm -f /tmp/install_clir.sh
 
 RUN set -e \
