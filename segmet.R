@@ -4,7 +4,8 @@
 
 Usage:
   segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmet.R segment [-v] [--seed=<int>] [--out=<dir>] <site_bed> <met_csv>
+  segmet.R segment [-v] [--seed=<int>] [--avgfun=<str>] [--out=<dir>]
+                    <site_bed> <met_csv>
   segmet.R cluster [-v] [--k=<int>] [--cutoff=<dbl>] [--dist=<str>]
                    [--hclust=<str>] [--ar=<ratio>] [--out=<dir>] <stats_csv>
   segmet.R --version
@@ -21,8 +22,9 @@ Options:
   --platform=<str>  Specify a methylation assay platform [default: EPIC]
                       choice: EPIC, hm450, hm27
   --unfilter        Skip recommended probe filtering
-  --seed=<int>      Set a random seed
   --out=<dir>       Set an output directory [default: .]
+  --seed=<int>      Set a random seed
+  --avgfun=<str>    Specify the function for segment average [default: median]
   --k=<int>         Specify the number of clusters [default: 3]
   --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0.5]
   --dist=<str>      Specify the method of stats::dist [default: euclidean]
@@ -97,7 +99,7 @@ main <- function(opts, root_dir = fetch_script_root()) {
                              dst_dir = dst_dir)
     calculate_segment_stats(seg_csv = seg_csv,
                             met_csv = normalizePath(opts[['<met_csv>']]),
-                            dst_dir = dst_dir)
+                            dst_dir = dst_dir, avg = opts[['--avgfun']])
   } else if (opts[['cluster']]) {
     aspect_ratio <- as.integer(str_split(opts[['--ar']], pattern = ':',
                                          n = 2, simplify = TRUE))
@@ -314,6 +316,6 @@ read_csv_quietly <- function(path, ...) {
 
 if (! interactive()) {
   library('docopt', quietly = TRUE)
-  main(opts = docopt::docopt(gsub('\\]\n +\\[', '] [', doc),
+  main(opts = docopt::docopt(gsub('\\]\n +([\\[<])', '] \\1', doc),
                              version = script_version))
 }
