@@ -1,18 +1,15 @@
-FROM ubuntu:latest
-
-ENV DEBIAN_FRONTEND noninteractive
+FROM dceoy/r-jupyter:latest
 
 ADD https://raw.githubusercontent.com/dceoy/clir/master/install_clir.sh /tmp/install_clir.sh
 ADD segmet.R /usr/local/bin/segmet.R
 
 RUN set -e \
-      && ln -sf bash /bin/sh \
       && ln -s segmet.R /usr/local/bin/segmet
 
 RUN set -e \
       && apt-get -y update \
       && apt-get -y install --no-install-recommends --no-install-suggests \
-        apt-transport-https apt-utils ca-certificates gnupg \
+        gnupg \
       && echo 'deb https://cloud.r-project.org/bin/linux/ubuntu focal-cran40/' \
         > /etc/apt/sources.list.d/r.list \
       && apt-key adv --keyserver keyserver.ubuntu.com \
@@ -20,15 +17,13 @@ RUN set -e \
       && apt-get -y update \
       && apt-get -y dist-upgrade \
       && apt-get -y install --no-install-recommends --no-install-suggests \
-        curl g++ gcc gfortran git make libblas-dev libbz2-dev \
-        libcurl4-gnutls-dev libgit2-dev libjpeg-turbo8-dev liblapack-dev \
-        liblzma-dev libpng-dev libssh-dev libssl-dev libxml2-dev r-base \
+        libbz2-dev libjpeg-turbo8-dev libpng-dev \
       && apt-get -y autoremove \
       && apt-get clean \
       && rm -rf /var/lib/apt/lists/*
 
 RUN set -e \
-      && bash /tmp/install_clir.sh --root \
+      && bash /tmp/install_clir.sh --root --delete-r-lib \
       && rm -f /tmp/install_clir.sh
 
 RUN set -e \
@@ -36,5 +31,9 @@ RUN set -e \
       && clir install --devt=cran changepoint gplots RColorBrewer tidyverse \
       && clir install --devt=bioc GenomicRanges \
       && clir validate changepoint GenomicRanges gplots RColorBrewer tidyverse
+
+RUN set -e \
+      && clir install --devt=github IRkernel/IRkernel \
+      && R -q -e 'IRkernel::installspec();'
 
 ENTRYPOINT ["/usr/local/bin/segmet"]

@@ -81,7 +81,7 @@ main <- function(opts, root_dir = fetch_script_root()) {
   }
   load_packages(pkgs = c('tidyverse', add_pkgs))
   make_dir(path = opts[['--out']])
-  dsr_dir <- normalizePath(opts[['--out']])
+  dst_dir <- normalizePath(opts[['--out']])
 
   if (opts[['bed']]) {
     prepare_site_bed(dst_dir = dst_dir,
