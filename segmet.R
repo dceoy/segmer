@@ -8,6 +8,7 @@ Usage:
                    [--out=<dir>] <site_bed> <met_csv>
   segmet.R cluster [-v] [--k=<int>] [--cutoff=<dbl>] [--dist=<str>]
                    [--hclust=<str>] [--ar=<ratio>] [--out=<dir>] <stats_csv>
+  segmet.R --session
   segmet.R --version
   segmet.R -h|--help
 
@@ -31,6 +32,7 @@ Options:
   --dist=<str>      Specify the method of stats::dist [default: euclidean]
   --hclust=<str>    Specify the method of stats::hclust [default: ward.D2]
   --ar=<ratio>      Specify the aspect ratio of figures [default: 13:8]
+  --session         Print session information and exit ({devtools} is required)
   --version         Print version and exit
   -h, --help        Print help and exit
 
@@ -45,7 +47,7 @@ Arguments:
 ' -> doc
 
 
-script_version <- 'v0.0.3'
+command_version <- 'v0.0.3'
 
 fetch_script_root <- function() {
   ca <- commandArgs(trailingOnly = FALSE)
@@ -71,45 +73,52 @@ main <- function(opts, root_dir = fetch_script_root()) {
   if (opts[['-v']]) {
     print(opts)
   }
-  if (! is.null(opts[['--seed']])) {
-    message('>>> Set a random seed')
-    set.seed(opts[['--seed']])
-    message(opts[['--seed']])
-  }
 
-  if (opts[['bed']]) {
-    add_pkgs <- 'GenomicRanges'
-  } else if (opts[['segment']]) {
-    add_pkgs <- 'changepoint'
-  } else if (opts[['cluster']]) {
-    add_pkgs <- c('gplots', 'RColorBrewer')
+  if (opts[['--session']]) {
+    library('devtools', quietly = TRUE)
+    print(devtools::session_info(pkgs = c('changepoint', 'GenomicRanges',
+                                          'gplots', 'RColorBrewer',
+                                          'tidyverse')))
   } else {
-    add_pkgs <- NULL
-  }
-  load_packages(pkgs = c('tidyverse', add_pkgs))
-  make_dir(path = opts[['--out']])
-  dst_dir <- normalizePath(opts[['--out']])
+    if (opts[['bed']]) {
+      add_pkgs <- 'GenomicRanges'
+    } else if (opts[['segment']]) {
+      add_pkgs <- 'changepoint'
+    } else if (opts[['cluster']]) {
+      add_pkgs <- c('gplots', 'RColorBrewer')
+    } else {
+      add_pkgs <- NULL
+    }
+    load_packages(pkgs = c('tidyverse', add_pkgs))
+    make_dir(path = opts[['--out']])
+    dst_dir <- normalizePath(opts[['--out']])
 
-  if (opts[['bed']]) {
-    prepare_site_bed(dst_dir = dst_dir,
-                     platform = opts[['--platform']],
-                     unfilter = opts[['--unfilter']])
-  } else if (opts[['segment']]) {
-    seg_csv <- segment_sites(site_bed = normalizePath(opts[['<site_bed>']]),
-                             met_csv = normalizePath(opts[['<met_csv>']]),
-                             dst_dir = dst_dir, cpstat = opts[['--cpstat']])
-    calculate_segment_stats(seg_csv = seg_csv,
-                            met_csv = normalizePath(opts[['<met_csv>']]),
-                            dst_dir = dst_dir, avg = opts[['--avgfun']])
-  } else if (opts[['cluster']]) {
-    aspect_ratio <- as.integer(str_split(opts[['--ar']], pattern = ':',
-                                         n = 2, simplify = TRUE))
-    cluster_segments(stats_csv = normalizePath(opts[['<stats_csv>']]),
-                     dst_dir = dst_dir, k = opts[['--k']],
-                     cutoff = as.numeric(opts[['--cutoff']]),
-                     dist_method = opts[['--dist']],
-                     hclust_method = opts[['--hclust']],
-                     width = aspect_ratio[1], height = aspect_ratio[2])
+    if (opts[['bed']]) {
+      prepare_site_bed(dst_dir = dst_dir,
+                       platform = opts[['--platform']],
+                       unfilter = opts[['--unfilter']])
+    } else if (opts[['segment']]) {
+      if (! is.null(opts[['--seed']])) {
+        message('>>> Set a random seed')
+        set.seed(opts[['--seed']])
+        message(opts[['--seed']])
+      }
+      seg_csv <- segment_sites(site_bed = normalizePath(opts[['<site_bed>']]),
+                               met_csv = normalizePath(opts[['<met_csv>']]),
+                               dst_dir = dst_dir, cpstat = opts[['--cpstat']])
+      calculate_segment_stats(seg_csv = seg_csv,
+                              met_csv = normalizePath(opts[['<met_csv>']]),
+                              dst_dir = dst_dir, avg = opts[['--avgfun']])
+    } else if (opts[['cluster']]) {
+      aspect_ratio <- as.integer(str_split(opts[['--ar']], pattern = ':',
+                                           n = 2, simplify = TRUE))
+      cluster_segments(stats_csv = normalizePath(opts[['<stats_csv>']]),
+                       dst_dir = dst_dir, k = opts[['--k']],
+                       cutoff = as.numeric(opts[['--cutoff']]),
+                       dist_method = opts[['--dist']],
+                       hclust_method = opts[['--hclust']],
+                       width = aspect_ratio[1], height = aspect_ratio[2])
+    }
   }
 }
 
@@ -319,5 +328,5 @@ read_csv_quietly <- function(path, ...) {
 if (! interactive()) {
   library('docopt', quietly = TRUE)
   main(opts = docopt::docopt(gsub('\\]\n +([\\[<])', '] \\1', doc),
-                             version = script_version))
+                             version = command_version))
 }
