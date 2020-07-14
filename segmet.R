@@ -47,7 +47,7 @@ Arguments:
 ' -> doc
 
 
-command_version <- 'v0.0.3'
+command_version <- 'v0.0.4'
 
 fetch_script_root <- function() {
   ca <- commandArgs(trailingOnly = FALSE)
@@ -129,27 +129,32 @@ cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
   distfun <- function(...) return(dist(..., method = dist_method))
   hclustfun <- function(...) return(hclust(..., method = hclust_method))
   out_prefix <- str_c(sub('.csv(|.gz)$', '', stats_csv),
-                      dist_method, hclust_method,
                       str_c('co', as.integer(cutoff * 100)),
+                      dist_method, hclust_method,
                       str_c('k', k), sep = '.')
-  cluster_csv <- str_c(out_prefix, '.csv')
   df_stats <- column_to_rownames(read_csv_quietly(stats_csv),
                                  var = 'segment')
-  mt_stats <- as.matrix(filter(df_stats,
-                               apply(df_stats, 1, max) >=  cutoff))
-  message('passing segments:\t', nrow(mt_stats), ' / ', nrow(df_stats))
-  hclust_labels <- stats::cutree(hclustfun(distfun(t(mt_stats))), k = k)
-  message('>>> Write an observed cluster CSV:\t', cluster_csv)
-  write_csv(tibble(sample_id = names(hclust_labels),
-                   observed_cluster = hclust_labels),
-            path = cluster_csv)
+  message('>>> Filter segments by cutoff (max >= ', cutoff, ')')
+  df_co <- filter(df_stats,
+                  apply(df_stats, 1, max) >=  cutoff)
+  message('passing segments:\t', nrow(df_co), ' / ', nrow(df_stats))
+  pass_csv <- str_c(out_prefix, '.pass.csv')
+  message('>>> Write passing segments CSV:\t', pass_csv)
+  write_csv(tibble(segment = rownames(df_co)), path = pass_csv)
+  hclust_csv <- str_c(out_prefix, '.hclust.csv')
+  message('>>> Write an observed cluster CSV:\t', hclust_csv)
+  mt_co <- as.matrix(df_co)
+  hclust_hclusts <- stats::cutree(hclustfun(distfun(t(mt_co))), k = k)
+  write_csv(tibble(sample_id = names(hclust_hclusts),
+                   observed_cluster = hclust_hclusts),
+            path = hclust_csv)
   heatmap_pdf <- str_c(out_prefix, '.heatmap.pdf')
   message('>>> Draw a heatmap:\t', heatmap_pdf)
-  to_pdf(heatmap_plot(mt = mt_stats, col_labels = hclust_labels,
+  to_pdf(heatmap_plot(mt = mt_co, col_labels = hclust_hclusts,
                       distfun = distfun, hclustfun = hclustfun,
                       margins = c(5, 10)),
          path = heatmap_pdf, w = width, h = height)
-  return(c(cluster_csv, heatmap_pdf))
+  return(c(pass_csv, hclust_csv, heatmap_pdf))
 }
 
 heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
@@ -245,9 +250,10 @@ read_met_csv <- function(path) {
 read_bed <- function(path) {
   message('>>> Read a BED file: ', path)
   stopifnot(file.exists(path))
-  d <- read.table(path, header = FALSE)[, 1:4]
-  names(d) <- c('chrom', 'chromStart', 'chromEnd', 'name')
-  return(arrange(as_tibble(d), chrom, chromStart, chromEnd))
+  return(arrange(as_tibble(setNames(read.table(path, header = FALSE)[, 1:4],
+                                    c('chrom', 'chromStart', 'chromEnd',
+                                      'name'))),
+                 chrom, chromStart, chromEnd))
 }
 
 prepare_site_bed <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
