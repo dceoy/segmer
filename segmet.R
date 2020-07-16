@@ -28,7 +28,7 @@ Options:
   --cpstat=<str>    Specify the statistic for changepoint [default: meanvar]
   --avgfun=<str>    Specify the function for segment average [default: median]
   --k=<int>         Specify the number of clusters [default: 3]
-  --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0.5]
+  --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0]
   --dist=<str>      Specify the method of stats::dist [default: euclidean]
   --hclust=<str>    Specify the method of stats::hclust [default: ward.D2]
   --ar=<ratio>      Specify the aspect ratio of figures [default: 13:8]
