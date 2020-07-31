@@ -6,7 +6,7 @@ Usage:
   segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
   segmet.R segment [-v] [--seed=<int>] [--cpstat=<str>] [--avgfun=<str>]
                    [--out=<dir>] <site_bed> <met_csv>
-  segmet.R cluster [-v] [--k=<int>] [--cutoff=<dbl>] [--dist=<str>]
+  segmet.R cluster [-v] [--k=<int>] [--drop=<dbl>] [--dist=<str>]
                    [--hclust=<str>] [--ar=<ratio>] [--out=<dir>] <stats_csv>
   segmet.R --session
   segmet.R --version
@@ -28,7 +28,7 @@ Options:
   --cpstat=<str>    Specify the statistic for changepoint [default: meanvar]
   --avgfun=<str>    Specify the function for segment average [default: median]
   --k=<int>         Specify the number of clusters [default: 3]
-  --cutoff=<dbl>    Specify the cutoff for segmental values [default: 0]
+  --drop=<dbl>      Specify the proportion of the ignored segments [default: 0]
   --dist=<str>      Specify the method of stats::dist [default: euclidean]
   --hclust=<str>    Specify the method of stats::hclust [default: ward.D2]
   --ar=<ratio>      Specify the aspect ratio of figures [default: 13:8]
@@ -47,7 +47,7 @@ Arguments:
 ' -> doc
 
 
-command_version <- 'v0.0.4'
+command_version <- 'v0.0.5'
 
 fetch_script_root <- function() {
   ca <- commandArgs(trailingOnly = FALSE)
@@ -114,7 +114,7 @@ main <- function(opts, root_dir = fetch_script_root()) {
                                            n = 2, simplify = TRUE))
       cluster_segments(stats_csv = normalizePath(opts[['<stats_csv>']]),
                        dst_dir = dst_dir, k = opts[['--k']],
-                       cutoff = as.numeric(opts[['--cutoff']]),
+                       drop_prop = as.numeric(opts[['--drop']]),
                        dist_method = opts[['--dist']],
                        hclust_method = opts[['--hclust']],
                        width = aspect_ratio[1], height = aspect_ratio[2])
@@ -122,39 +122,47 @@ main <- function(opts, root_dir = fetch_script_root()) {
   }
 }
 
-cluster_segments <- function(stats_csv, dst_dir, k = 3, cutoff = 0.5,
+cluster_segments <- function(stats_csv, dst_dir, k = 3, drop_prop = 0,
                              dist_method = 'euclidean',
                              hclust_method = 'ward.D2', width = 13,
                              height = 8) {
+  stopifnot((k > 1) & (drop_prop >= 0) & (drop_prop < 1))
   distfun <- function(...) return(dist(..., method = dist_method))
   hclustfun <- function(...) return(hclust(..., method = hclust_method))
+  drop_percent <- as.integer(drop_prop * 100)
   out_prefix <- str_c(sub('.csv(|.gz)$', '', stats_csv),
-                      str_c('co', as.integer(cutoff * 100)),
+                      str_c('drop', drop_percent),
                       dist_method, hclust_method,
                       str_c('k', k), sep = '.')
-  df_stats <- column_to_rownames(read_csv_quietly(stats_csv),
-                                 var = 'segment')
-  message('>>> Filter segments by cutoff (max >= ', cutoff, ')')
-  df_co <- filter(df_stats,
-                  apply(df_stats, 1, max) >=  cutoff)
-  message('passing segments:\t', nrow(df_co), ' / ', nrow(df_stats))
-  pass_csv <- str_c(out_prefix, '.pass.csv')
-  message('>>> Write passing segments CSV:\t', pass_csv)
-  write_csv(tibble(segment = rownames(df_co)), path = pass_csv)
+  df_stats <- read_csv_quietly(stats_csv)
+  n_seg <- nrow(df_stats)
+  if (drop_prop > 0) {
+    message('>>> Drop low-variance segments (', drop_percent, '%)')
+    df_stats <- select(slice_max(mutate(df_stats,
+                                        s2 = apply(select(df_stats, -segment),
+                                                   1, var)),
+                                 s2,
+                                 prop = 1 - drop_prop),
+                       -s2)
+  }
+  message('used segments:\t', nrow(df_stats), ' / ', n_seg)
+  used_csv <- str_c(out_prefix, '.used.csv')
+  message('>>> Write used segments CSV:\t', used_csv)
+  write_csv(df_stats, path = used_csv)
   hclust_csv <- str_c(out_prefix, '.hclust.csv')
   message('>>> Write an observed cluster CSV:\t', hclust_csv)
-  mt_co <- as.matrix(df_co)
-  hclust_hclusts <- stats::cutree(hclustfun(distfun(t(mt_co))), k = k)
+  mt_top <- as.matrix(column_to_rownames(df_stats, var = 'segment'))
+  hclust_hclusts <- stats::cutree(hclustfun(distfun(t(mt_top))), k = k)
   write_csv(tibble(sample_id = names(hclust_hclusts),
                    observed_cluster = hclust_hclusts),
             path = hclust_csv)
   heatmap_pdf <- str_c(out_prefix, '.heatmap.pdf')
   message('>>> Draw a heatmap:\t', heatmap_pdf)
-  to_pdf(heatmap_plot(mt = mt_co, col_labels = hclust_hclusts,
+  to_pdf(heatmap_plot(mt = mt_top, col_labels = hclust_hclusts,
                       distfun = distfun, hclustfun = hclustfun,
                       margins = c(5, 10)),
          path = heatmap_pdf, w = width, h = height)
-  return(c(pass_csv, hclust_csv, heatmap_pdf))
+  return(c(used_csv, hclust_csv, heatmap_pdf))
 }
 
 heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
