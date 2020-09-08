@@ -1,7 +1,7 @@
 segmet
 ======
 
-Segment Detector for differentially methylated regions in methylome data
+Segment Detector for Differentially Methylated Regions in Methylome Data
 
 Supporetd platforms:
 
