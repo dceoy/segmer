@@ -248,18 +248,25 @@ calculate_segment_stats <- function(seg_csv, met_csv, dst_dir,
   return(stats_csv)
 }
 
-digitalize_bv <- function(df_bv, model_names = 'E') {
-  message('>>> Determine the boundary by K-means:\tmodelNames = ', model_names)
+determine_bv_boundary <- function(df_bv, ...) {
+  message('>>> Determine the boundary by K-means')
   bv <- as.vector(as.matrix(select(df_bv, -name)))
   df_b <- summarize(group_by(tibble(bv = bv,
-                                    label = kmeans(bv, centers = 2)$cluster),
+                                    label = kmeans(bv,
+                                                   centers = 2,
+                                                   ...)$cluster),
                              label),
                     min_bv = min(bv), max_bv = max(bv),
                     .groups = 'drop')
-  boundary_bv <- mean(max(df_b$min_bv), min(df_b$max_bv))
-  message('>>> Digitalize beta-values by the boundary:\t', boundary_bv)
+  return(mean(max(df_b$min_bv), min(df_b$max_bv)))
+}
+
+digitalize_bv <- function(df_bv, bv_boundary = NULL) {
+  bvb <- ifelse(is.null(bv_boundary),
+                determine_bv_boundary(df_bv = df_bv), bv_boundary)
+  message('>>> Digitalize beta-values by the boundary:\t', bvb)
   return(cbind(select(df_bv, name),
-               mutate_all(as_tibble(select(df_bv, -name) > boundary_bv),
+               mutate_all(as_tibble(select(df_bv, -name) > bvb),
                           as.integer)))
 }
 
@@ -272,7 +279,6 @@ segment_sites <- function(site_csv, met_csv, dst_dir, method = 'PELT',
                           ...) {
   df_site <- read_csv_quietly(site_csv)
   df_bv <- read_bv_csv(path = met_csv)
-  message('>>> Calculate sample variances')
   df_var <- mutate(inner_join(df_site, bv2var(digitalize_bv(df_bv)),
                               by = 'name'),
                    sid = row_number())
@@ -288,15 +294,14 @@ segment_sites <- function(site_csv, met_csv, dst_dir, method = 'PELT',
                                                      cp_sid = cp_sids),
                                               by = 'cp_sid'),
                                     sid),
-                               chrom, genesUniq, CGI, CGIposition, sid),
+                               CGI, CGIposition, sid),
                       segment = str_c(unique(chrom), ':',
                                       min(chromStart) + 1,
                                       '-', max(chromEnd)),
                       .groups = 'drop')
-  df_seg <- fill(left_join(select(df_var, -chromStart, -chromEnd),
+  df_seg <- fill(left_join(select(df_var, -chrom, -chromStart, -chromEnd),
                            df_reg,
-                           by = c('chrom', 'genesUniq', 'CGI', 'CGIposition',
-                                  'sid')),
+                           by = c('CGI', 'CGIposition', 'sid')),
                  segment)
   print(summary(summarize(group_by(df_seg, segment),
                           sites_per_segment = n(),
