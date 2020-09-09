@@ -4,11 +4,11 @@
 
 Usage:
   segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmet.R segment [-v] [--seed=<int>] [--avgfun=<str>] [--out=<dir>]
-                   <site_csv> <met_csv>
+  segmet.R segment [-v] [--seed=<int>] [--avgfun=<str>] [--ar=<ratio>]
+                   [--out=<dir>] <site_csv> <met_csv>
   segmet.R cluster [-v] [--k=<int>] [--drop=<dbl>] [--dist=<str>]
-                   [--hclust=<str>] [--ar=<ratio>] [--out=<dir>] <stats_csv>
-  segmet.R plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <met_csv>
+                   [--hclust=<str>] [--ar=<ratio>] [--out=<dir>]
+                   <segbv_csv>
   segmet.R --session
   segmet.R --version
   segmet.R -h|--help
@@ -18,7 +18,6 @@ Commands:
   segment           Segment target sites by sample variance
                     (Sites including NA are ignored.)
   cluster           Execute clustering and draw the heatmap
-  plot              Visualize methylation data
 
 Options:
   -v                Run with debug logging
@@ -42,12 +41,12 @@ Arguments:
   <met_csv>         Path to a methylation CSV file
                       the 1st column: probe names
                       the other columns: beta-values
-  <stats_csv>       Path to a segmental beta-value CSV file
-                    (`*.seg.met.median.csv` created by `segmet stats`)
+  <segbv_csv>       Path to a segmental beta-value CSV file
+                    (`*.seg.bv.median.dmr.csv` created by `segmet segment`)
 ' -> doc
 
 
-command_version <- 'v0.0.6'
+command_version <- 'v0.0.7'
 
 fetch_script_root <- function() {
   ca <- commandArgs(trailingOnly = FALSE)
@@ -83,18 +82,16 @@ main <- function(opts, root_dir = fetch_script_root()) {
     if (opts[['bed']]) {
       add_pkgs <- 'GenomicRanges'
     } else if (opts[['segment']]) {
-      add_pkgs <- 'changepoint'
+      add_pkgs <- c('changepoint', 'ggpubr')
     } else if (opts[['cluster']]) {
       add_pkgs <- c('gplots', 'RColorBrewer')
-    } else if (opts[['plot']]) {
-      add_pkgs <- 'ggpubr'
     } else {
       add_pkgs <- NULL
     }
     load_packages(pkgs = c('tidyverse', add_pkgs))
     make_dir(path = opts[['--out']])
     dst_dir <- normalizePath(opts[['--out']])
-    if (opts[['cluster']] | opts[['plot']]) {
+    if (opts[['segment']] | opts[['cluster']]) {
       aspect_ratio <- as.integer(str_split(opts[['--ar']], pattern = ':',
                                            n = 2, simplify = TRUE))
     } else {
@@ -111,65 +108,31 @@ main <- function(opts, root_dir = fetch_script_root()) {
         set.seed(opts[['--seed']])
         message(opts[['--seed']])
       }
-      seg_csv <- segment_sites(site_csv = normalizePath(opts[['<site_csv>']]),
-                               met_csv = normalizePath(opts[['<met_csv>']]),
-                               dst_dir = dst_dir)
-      calculate_segment_stats(seg_csv = seg_csv,
-                              met_csv = normalizePath(opts[['<met_csv>']]),
-                              dst_dir = dst_dir, avg = opts[['--avgfun']])
+      site_csv <- normalizePath(opts[['<site_csv>']])
+      met_csv <- normalizePath(opts[['<met_csv>']])
+      visualize_bv_var(site_csv = site_csv, met_csv = met_csv,
+                       dst_dir = dst_dir, width = aspect_ratio[1],
+                       height = aspect_ratio[2])
+      csv_list <- segment_sites(site_csv = site_csv, met_csv = met_csv,
+                                dst_dir = dst_dir)
+      visualize_segments(seg_csv = csv_list$seg_csv, dst_dir = dst_dir,
+                         width = aspect_ratio[1], height = aspect_ratio[2])
+      calculate_segment_segbv(seg_csv = csv_list$seg_csv, met_csv = met_csv,
+                              dst_dir = dst_dir,
+                              bv_boundary = scan(csv_list$bv_boundary_txt),
+                              avg = opts[['--avgfun']])
     } else if (opts[['cluster']]) {
-      cluster_segments(stats_csv = normalizePath(opts[['<stats_csv>']]),
+      cluster_segments(segbv_csv = normalizePath(opts[['<segbv_csv>']]),
                        dst_dir = dst_dir, k = opts[['--k']],
                        drop_prop = as.numeric(opts[['--drop']]),
                        dist_method = opts[['--dist']],
                        hclust_method = opts[['--hclust']],
                        width = aspect_ratio[1], height = aspect_ratio[2])
-    } else if (opts[['plot']]) {
-      draw_bv_var(site_csv = normalizePath(opts[['<site_csv>']]),
-                  met_csv = normalizePath(opts[['<met_csv>']]),
-                  dst_dir = dst_dir, width = aspect_ratio[1],
-                  height = aspect_ratio[2])
     }
   }
 }
 
-draw_bv_var <- function(site_csv, met_csv, dst_dir, width = 13, height = 8) {
-  df_site <- read_csv_quietly(site_csv)
-  df_bv <- filter(read_bv_csv(path = met_csv), name %in% df_site$name)
-  df_var <- inner_join(select(dplyr::rename(df_site, position = chromStart),
-                              chrom, position, name, genesUniq, CGI,
-                              CGIposition),
-                       bv2var(df_bv),
-                       by = 'name')
-  ylim <- c(0, max(df_var$variance) * 1.2)
-  out_prefix <- file.path(dst_dir, sub('.csv(|.gz)$', '', basename(met_csv)))
-
-  hist_pdf <- str_c(out_prefix, '.hist.pdf')
-  message('>>> Plot a histogram:\t', hist_pdf)
-  to_pdf(plot(gghistogram(tibble(v = as.vector(as.matrix(select(df_bv,
-                                                                -name)))),
-                          x = 'v', fill = 'navy', color = NA, alpha = 0.2,
-                          xlab = 'beta-value')),
-         path = hist_pdf, w = width, h = height)
-
-  for (n in unique(df_site$chrom)) {
-    p <- str_c(out_prefix, 'var', n, 'pdf', sep = '.')
-    message('>>> Plot chromosomal beta-value variance:\t', p)
-    to_pdf(plot(ggscatter(filter(df_var, chrom == n),
-                          x = 'position', y = 'variance', color = 'navy',
-                          alpha = 0.1, size = 0.1, ylim = ylim,
-                          xlab = str_c('position on ', n),
-                          ylab = 'beta-value variance') +
-                scale_x_continuous(labels = digit2str)),
-           path = p, w = width, h = height)
-  }
-}
-
-digit2str <- function(i) {
-  return(format(i, scientific = FALSE))
-}
-
-cluster_segments <- function(stats_csv, dst_dir, k = 3, drop_prop = 0,
+cluster_segments <- function(segbv_csv, dst_dir, k = 3, drop_prop = 0,
                              dist_method = 'euclidean',
                              hclust_method = 'ward.D2', width = 13,
                              height = 8) {
@@ -177,39 +140,39 @@ cluster_segments <- function(stats_csv, dst_dir, k = 3, drop_prop = 0,
   distfun <- function(...) return(dist(..., method = dist_method))
   hclustfun <- function(...) return(hclust(..., method = hclust_method))
   drop_percent <- as.integer(drop_prop * 100)
-  out_prefix <- str_c(sub('.csv(|.gz)$', '', stats_csv),
+  out_prefix <- str_c(sub('.csv(|.gz)$', '', segbv_csv),
                       str_c('drop', drop_percent),
                       dist_method, hclust_method,
                       str_c('k', k), sep = '.')
-  df_stats <- read_csv_quietly(stats_csv)
-  n_seg <- nrow(df_stats)
+  df_segbv <- read_csv_quietly(segbv_csv)
+  n_seg <- nrow(df_segbv)
   if (drop_prop > 0) {
     message('>>> Drop low-variance segments (', drop_percent, '%)')
-    df_stats <- select(slice_max(mutate(df_stats,
-                                        s2 = apply(select(df_stats, -segment),
+    df_segbv <- select(slice_max(mutate(df_segbv,
+                                        s2 = apply(select(df_segbv, -segment),
                                                    1, var)),
                                  s2,
                                  prop = 1 - drop_prop),
                        -s2)
   }
-  message('used segments:\t', nrow(df_stats), ' / ', n_seg)
+  message('used segments:\t', nrow(df_segbv), ' / ', n_seg)
   used_csv <- str_c(out_prefix, '.used.csv')
   message('>>> Write used segments CSV:\t', used_csv)
-  write_csv(df_stats, path = used_csv)
+  write_csv(df_segbv, path = used_csv)
   hclust_csv <- str_c(out_prefix, '.hclust.csv')
   message('>>> Write an observed cluster CSV:\t', hclust_csv)
-  mt_top <- as.matrix(column_to_rownames(df_stats, var = 'segment'))
+  mt_top <- as.matrix(column_to_rownames(df_segbv, var = 'segment'))
   hclust_hclusts <- stats::cutree(hclustfun(distfun(t(mt_top))), k = k)
   write_csv(tibble(sample_id = names(hclust_hclusts),
                    observed_cluster = hclust_hclusts),
             path = hclust_csv)
   heatmap_pdf <- str_c(out_prefix, '.heatmap.pdf')
-  message('>>> Draw a heatmap:\t', heatmap_pdf)
+  message('>>> Plot a heatmap:\t', heatmap_pdf)
   to_pdf(heatmap_plot(mt = mt_top, col_labels = hclust_hclusts,
                       distfun = distfun, hclustfun = hclustfun,
                       margins = c(5, 10)),
          path = heatmap_pdf, w = width, h = height)
-  return(c(used_csv, hclust_csv, heatmap_pdf))
+  return(list(used_csv = used_csv, hclust_csv = hclust_csv))
 }
 
 heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
@@ -230,27 +193,41 @@ to_pdf <- function(graph, path, w = 10, h = 10) {
   dev.off()
 }
 
-calculate_segment_stats <- function(seg_csv, met_csv, dst_dir,
-                                    avg = 'median') {
+calculate_segment_segbv <- function(seg_csv, met_csv, dst_dir,
+                                    bv_boundary = NULL, avg = 'median') {
   df_seg <- read_csv_quietly(path = seg_csv)
   df_bv <- read_bv_csv(path = met_csv)
   message('>>> Calculate segmental ', avg, ' values')
-  df_stats <- summarize_all(group_by(select(left_join(select(df_seg,
+  df_segbv <- summarize_all(group_by(select(left_join(select(df_seg,
                                                              name, segment),
                                                       df_bv, by = 'name'),
                                             -name),
                                      segment),
                             eval(parse(text = avg)),
                             .groups = 'drop')
-  stats_csv <- sub('.csv$', str_c('.met.', avg, '.csv'), seg_csv)
-  message('>>> Write a segmental ', avg, ' CSV:\t', stats_csv)
-  write_csv(df_stats, path = stats_csv)
-  return(stats_csv)
+  out_prefix <- file.path(dst_dir,
+                          str_c(sub('.csv(|.gz)$', '', basename(seg_csv)),
+                                'bv', avg, sep = '.'))
+  segbv_csv <- str_c(out_prefix, '.all.csv')
+  message('>>> Write a segmental ', avg, ' CSV:\t', segbv_csv)
+  write_csv(df_segbv, path = segbv_csv)
+  segd_csv <- str_c(out_prefix, '.digital.csv')
+  message('>>> Write a digitalized segmental ', avg, ' CSV:\t', segd_csv)
+  df_segd <- digitalize_bv(df_segbv, bv_boundary)
+  write_csv(df_segd, path = segd_csv)
+  dmr_csv <- str_c(out_prefix, '.dmr.csv')
+  message('>>> Write a DMR segmental ', avg, ' CSV:\t', dmr_csv)
+  df_dmr <- inner_join(select(filter(bv2var(df_segd), variance > 0),
+                              -variance),
+                       df_segbv, by = 'segment')
+  message('DMR segments:\t', nrow(df_dmr), ' / ', nrow(df_segbv))
+  write_csv(df_dmr, path = dmr_csv)
+  return(dmr_csv)
 }
 
 determine_bv_boundary <- function(df_bv, ...) {
   message('>>> Determine the boundary by K-means')
-  bv <- as.vector(as.matrix(select(df_bv, -name)))
+  bv <- as.vector(as.matrix(select(df_bv, -1)))
   df_b <- summarize(group_by(tibble(bv = bv,
                                     label = kmeans(bv,
                                                    centers = 2,
@@ -265,24 +242,31 @@ digitalize_bv <- function(df_bv, bv_boundary = NULL) {
   bvb <- ifelse(is.null(bv_boundary),
                 determine_bv_boundary(df_bv = df_bv), bv_boundary)
   message('>>> Digitalize beta-values by the boundary:\t', bvb)
-  return(cbind(select(df_bv, name),
-               mutate_all(as_tibble(select(df_bv, -name) > bvb),
+  return(cbind(select(df_bv, 1),
+               mutate_all(as_tibble(select(df_bv, -1) > bvb),
                           as.integer)))
 }
 
 bv2var <- function(df_bv) {
-  return(enframe(apply(column_to_rownames(df_bv, var = 'name'), 1, var),
-                 name = 'name', value = 'variance'))
+  return(mutate(select(df_bv, 1), variance = apply(select(df_bv, -1), 1, var)))
 }
 
 segment_sites <- function(site_csv, met_csv, dst_dir, method = 'PELT',
                           ...) {
   df_site <- read_csv_quietly(site_csv)
   df_bv <- read_bv_csv(path = met_csv)
-  df_var <- mutate(inner_join(df_site, bv2var(digitalize_bv(df_bv)),
+  bv_boundary <- determine_bv_boundary(df_bv)
+  bv_boundary_txt <- file.path(dst_dir,
+                               sub('.csv(|.gz)$', '.boundary.txt',
+                                   basename(met_csv)))
+  message('>>> Write the beta-value boundary:\t', bv_boundary_txt)
+  write(bv_boundary, file = bv_boundary_txt)
+  df_var <- mutate(inner_join(df_site,
+                              bv2var(digitalize_bv(df_bv, bv_boundary)),
                               by = 'name'),
                    sid = row_number())
   message(nrow(df_var), ' sites are used.')
+
   message('>>> Detect changepoints by ', method, ' method')
   cpt <- changepoint::cpt.meanvar(df_var$variance, method = method, ...)
   summary(cpt)
@@ -306,13 +290,38 @@ segment_sites <- function(site_csv, met_csv, dst_dir, method = 'PELT',
   print(summary(summarize(group_by(df_seg, segment),
                           sites_per_segment = n(),
                           .groups = 'drop')))
+
   seg_csv <- file.path(dst_dir,
                        str_c(sub('.csv(|.gz)$', '', basename(met_csv)),
                              sub('.csv(|.gz)$', '', basename(site_csv)),
                              'seg.csv', sep = '.'))
   message('>>> Write a segment CSV file:\t', seg_csv)
   write_csv(df_seg, path = seg_csv)
-  return(seg_csv)
+  return(list(seg_csv = seg_csv, bv_boundary_txt = bv_boundary_txt))
+}
+
+visualize_segments <- function(seg_csv, dst_dir, width = 13, height = 8) {
+  df_seg <- read_csv_quietly(path = seg_csv)
+  out_prefix <- file.path(dst_dir, sub('.csv(|.gz)$', '', basename(seg_csv)))
+  pdf_list <- as.list(setNames(str_c(out_prefix, c('n_site', 'len'), 'pdf',
+                                     sep = '.'),
+                               c('n_site', 'len')))
+  message('>>> Plot segmental site count:\t', pdf_list$n_site)
+  to_pdf(plot(gghistogram(summarize(group_by(df_seg, segment),
+                                    n = n_distinct(name),
+                                    .groups = 'drop'),
+                          x = 'n', fill = 'navy', color = NA, alpha = 0.4,
+                          xlab = 'site count per segment',
+                          ylab = 'segment count', bins = 30)),
+         path = pdf_list$n_site, w = width, h = height)
+  message('>>> Plot segmental lengths:\t', pdf_list$len)
+  segment2len <- function(s) return(1 - eval(parse(text = sub('^.*:', '', s))))
+  to_pdf(plot(gghistogram(mutate(distinct(df_seg, segment),
+                                 len = sapply(segment, segment2len)),
+                          x = 'len', fill = 'navy', color = NA, alpha = 0.4,
+                          xlab = 'segment length (bp)', ylab = 'segment count',
+                          bins = 30)),
+         path = pdf_list$len, w = width, h = height)
 }
 
 read_bv_csv <- function(path) {
@@ -329,6 +338,41 @@ read_bed <- function(path) {
                                     c('chrom', 'chromStart', 'chromEnd',
                                       'name'))),
                  chrom, chromStart, chromEnd))
+}
+
+visualize_bv_var <- function(site_csv, met_csv, dst_dir, width = 13,
+                             height = 8) {
+  df_site <- read_csv_quietly(site_csv)
+  df_bv <- filter(read_bv_csv(path = met_csv), name %in% df_site$name)
+  df_var <- inner_join(select(dplyr::rename(df_site, position = chromStart),
+                              chrom, position, name, genesUniq, CGI,
+                              CGIposition),
+                       bv2var(df_bv),
+                       by = 'name')
+  ylim <- c(0, max(df_var$variance) * 1.2)
+  out_prefix <- file.path(dst_dir, sub('.csv(|.gz)$', '', basename(met_csv)))
+
+  hist_pdf <- str_c(out_prefix, '.hist.pdf')
+  message('>>> Plot a beta-value histogram:\t', hist_pdf)
+  to_pdf(plot(gghistogram(tibble(v = as.vector(as.matrix(select(df_bv,
+                                                                -name)))),
+                          x = 'v', fill = 'navy', color = NA, alpha = 0.4,
+                          xlab = 'beta-value', ylab = 'site count',
+                          bins = 30)),
+         path = hist_pdf, w = width, h = height)
+
+  digit2str <- function(i) return(format(i, scientific = FALSE))
+  for (n in unique(df_site$chrom)) {
+    p <- str_c(out_prefix, 'var', n, 'pdf', sep = '.')
+    message('>>> Plot beta-value variances:\t', p)
+    to_pdf(plot(ggscatter(filter(df_var, chrom == n),
+                          x = 'position', y = 'variance', color = 'navy',
+                          alpha = 0.1, size = 0.1, ylim = ylim,
+                          xlab = str_c('position on ', n),
+                          ylab = 'beta-value variance') +
+                scale_x_continuous(labels = digit2str)),
+           path = p, w = width, h = height)
+  }
 }
 
 prepare_site_csv <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,

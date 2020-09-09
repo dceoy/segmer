@@ -30,7 +30,7 @@ RUN set -e \
       && clir update \
       && clir install --devt=cran changepoint gplots ggpubr RColorBrewer tidyverse \
       && clir install --devt=bioc GenomicRanges \
-      && clir validate changepoint GenomicRanges gplots ggpubr RColorBrewer tidyverse \
+      && clir validate changepoint GenomicRanges gplots ggpubr RColorBrewer tidyverse
 
 RUN set -e \
       && clir install --devt=github IRkernel/IRkernel \
