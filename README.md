@@ -1,4 +1,4 @@
-segmet
+segmer
 ======
 
 Segment Detector for Differentially Methylated Regions in Methylome Data

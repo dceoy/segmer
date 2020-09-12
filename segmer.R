@@ -3,16 +3,16 @@
 'Segment Detector for differentially methylated regions in methylome data
 
 Usage:
-  segmet.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmet.R segment [-v] [--seed=<int>] [--avgfun=<str>] [--ar=<ratio>]
+  segmer.R bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
+  segmer.R segment [-v] [--seed=<int>] [--avgfun=<str>] [--ar=<ratio>]
                    [--out=<dir>] <site_csv> <bv_csv>
-  segmet.R cluster [-v] [--k=<int>] [--dist=<str>] [--hclust=<str>]
+  segmer.R cluster [-v] [--k=<int>] [--dist=<str>] [--hclust=<str>]
                    [--ar=<ratio>] [--out=<dir>] <dmrbv_csv>
-  segmet.R plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <bv_csv> <seg_csv>
+  segmer.R plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <bv_csv> <seg_csv>
                 <dmrbv_csv>
-  segmet.R --session
-  segmet.R --version
-  segmet.R -h|--help
+  segmer.R --session
+  segmer.R --version
+  segmer.R -h|--help
 
 Commands:
   bed               Download annotation data and write a target site CSV file
@@ -38,18 +38,18 @@ Options:
   -h, --help        Print help and exit
 
 Arguments:
-  <site_csv>        Path to a target site CSV file (created by `segmet bed`)
+  <site_csv>        Path to a target site CSV file (created by `segmer bed`)
   <bv_csv>          Path to a methylation CSV file
                       the 1st column: probe names
                       the other columns: beta-values
   <dmrbv_csv>       Path to a segmental beta-value CSV file of DMRs
-                    (`*.seg.bv.median.dmr.csv` created by `segmet segment`)
+                    (`*.seg.bv.median.dmr.csv` created by `segmer segment`)
   <seg_csv>         Path to a segment CSV file
-                    (`*.seg.csv` created by `segmet segment`)
+                    (`*.seg.csv` created by `segmer segment`)
 ' -> doc
 
 
-command_version <- 'v0.0.8'
+command_version <- 'v0.0.9'
 
 fetch_script_root <- function() {
   ca <- commandArgs(trailingOnly = FALSE)

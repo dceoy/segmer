@@ -2,16 +2,16 @@
 version: '3'
 
 services:
-  segmet:
-    container_name: segmet
+  segmer:
+    container_name: segmer
     build:
       context: .
       dockerfile: Dockerfile
-    image: dceoy/segmet:latest
+    image: dceoy/segmer:latest
     user: ${UID}:${GID}
     userns_mode: host
     volumes:
       - ${PWD}:/wd
     working_dir: /wd
     entrypoint:
-      - /usr/local/bin/segmet
+      - /usr/local/bin/segmer

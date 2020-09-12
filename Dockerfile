@@ -1,10 +1,10 @@
 FROM dceoy/r-jupyter:latest
 
 ADD https://raw.githubusercontent.com/dceoy/clir/master/install_clir.sh /tmp/install_clir.sh
-ADD segmet.R /usr/local/bin/segmet.R
+ADD segmer.R /usr/local/bin/segmer.R
 
 RUN set -e \
-      && ln -s segmet.R /usr/local/bin/segmet
+      && ln -s segmer.R /usr/local/bin/segmer
 
 RUN set -e \
       && apt-get -y update \
@@ -36,4 +36,4 @@ RUN set -e \
       && clir install --devt=github IRkernel/IRkernel \
       && R -q -e 'IRkernel::installspec();'
 
-ENTRYPOINT ["/usr/local/bin/segmet"]
+ENTRYPOINT ["/usr/local/bin/segmer"]
