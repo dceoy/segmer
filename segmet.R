@@ -115,12 +115,10 @@ main <- function(opts, root_dir = fetch_script_root()) {
       }
       site_csv <- normalizePath(opts[['<site_csv>']])
       bv_csv <- normalizePath(opts[['<bv_csv>']])
-      csv_list <- segment_sites(site_csv = site_csv, bv_csv = bv_csv,
-                                dst_dir = dst_dir)
-      calculate_segment_segbv(seg_csv = csv_list$seg_csv, bv_csv = bv_csv,
-                              dst_dir = dst_dir,
-                              bv_boundary = scan(csv_list$bv_boundary_txt),
-                              avg = opts[['--avgfun']])
+      seg_csv <- segment_sites(site_csv = site_csv, bv_csv = bv_csv,
+                               dst_dir = dst_dir)
+      calculate_segment_segbv(seg_csv = seg_csv, bv_csv = bv_csv,
+                              dst_dir = dst_dir, avg = opts[['--avgfun']])
     } else if (opts[['cluster']]) {
       cluster_segments(dmrbv_csv = normalizePath(opts[['<dmrbv_csv>']]),
                        dst_dir = dst_dir, k = opts[['--k']],
@@ -153,8 +151,6 @@ cluster_segments <- function(dmrbv_csv, dst_dir, k = 3,
                       dist_method, hclust_method,
                       str_c('k', k), sep = '.')
   df_dmrbv <- read_csv_quietly(dmrbv_csv)
-  n_seg <- nrow(df_dmrbv)
-  message('used segments:\t', nrow(df_dmrbv), ' / ', n_seg)
   hclust_csv <- str_c(out_prefix, '.hclust.csv')
   message('>>> Write an observed cluster CSV:\t', hclust_csv)
   mt_top <- as.matrix(column_to_rownames(df_dmrbv, var = 'segment'))
@@ -189,8 +185,7 @@ to_pdf <- function(graph, path, w = 10, h = 10) {
   dev.off()
 }
 
-calculate_segment_segbv <- function(seg_csv, bv_csv, dst_dir,
-                                    bv_boundary = NULL, avg = 'median') {
+calculate_segment_segbv <- function(seg_csv, bv_csv, dst_dir, avg = 'median') {
   df_seg <- read_csv_quietly(path = seg_csv)
   df_bv <- read_bv_csv(path = bv_csv)
   message('>>> Calculate segmental ', avg, ' values')
@@ -207,15 +202,20 @@ calculate_segment_segbv <- function(seg_csv, bv_csv, dst_dir,
   segbv_csv <- str_c(out_prefix, '.all.csv')
   message('>>> Write a segmental ', avg, ' CSV:\t', segbv_csv)
   write_csv(df_segbv, path = segbv_csv)
+
+  bv_boundary <- determine_bv_boundary(filter(df_bv, name %in% df_seg$name))
+  bv_boundary_txt <- str_c(out_prefix, '.boundary.txt')
+  message('>>> Write the beta-value boundary:\t', bv_boundary_txt)
+  write(bv_boundary, file = bv_boundary_txt)
+  df_dmrbv <- inner_join(select(filter(bv2var(digitalize_bv(df_segbv,
+                                                            bv_boundary)),
+                                       variance > 0),
+                                -variance),
+                         df_segbv, by = 'segment')
   dmrbv_csv <- str_c(out_prefix, '.dmr.csv')
-  df_dmr <- inner_join(select(filter(bv2var(digitalize_bv(df_segbv,
-                                                          bv_boundary)),
-                                     variance > 0),
-                              -variance),
-                       df_segbv, by = 'segment')
   message('>>> Write a DMR segmental ', avg, ' CSV:\t', dmrbv_csv)
-  write_csv(df_dmr, path = dmrbv_csv)
-  message('DMR segments:\t', nrow(df_dmr), ' / ', nrow(df_segbv))
+  write_csv(df_dmrbv, path = dmrbv_csv)
+  message('DMR segments:\t', nrow(df_dmrbv), ' / ', nrow(df_segbv))
   return(dmrbv_csv)
 }
 
@@ -248,15 +248,7 @@ bv2var <- function(df_bv) {
 segment_sites <- function(site_csv, bv_csv, dst_dir, method = 'PELT', ...) {
   df_site <- read_csv_quietly(site_csv)
   df_bv <- read_bv_csv(path = bv_csv)
-  bv_boundary <- determine_bv_boundary(df_bv)
-  bv_boundary_txt <- file.path(dst_dir,
-                               sub('.csv(|.gz)$', '.boundary.txt',
-                                   basename(bv_csv)))
-  message('>>> Write the beta-value boundary:\t', bv_boundary_txt)
-  write(bv_boundary, file = bv_boundary_txt)
-  df_var <- mutate(inner_join(df_site,
-                              bv2var(digitalize_bv(df_bv, bv_boundary)),
-                              by = 'name'),
+  df_var <- mutate(inner_join(df_site, bv2var(df_bv), by = 'name'),
                    genesUniq = replace_na(genesUniq, 'NA'),
                    CGI = replace_na(CGI, 'NA'),
                    CGIposition = replace_na(CGIposition, 'NA'),
@@ -273,12 +265,12 @@ segment_sites <- function(site_csv, bv_csv, dst_dir, method = 'PELT', ...) {
                         -cp_sid),
                  sid)
   df_seg <- left_join(select(df_sid, -chrom, -chromStart, -chromEnd),
-                      summarize(group_by(df_sid, CGI, CGIposition, sid),
+                      summarize(group_by(df_sid, CGI, sid),
                                 segment = str_c(unique(chrom), ':',
                                                 min(chromStart) + 1,
                                                 '-', max(chromEnd)),
                                 .groups = 'drop'),
-                      by = c('CGI', 'CGIposition', 'sid'))
+                      by = c('CGI', 'sid'))
   print(summary(summarize(group_by(df_seg, segment),
                           sites_per_segment = n(),
                           .groups = 'drop')))
@@ -291,7 +283,7 @@ segment_sites <- function(site_csv, bv_csv, dst_dir, method = 'PELT', ...) {
                              'seg.csv', sep = '.'))
   message('>>> Write a segment CSV:\t', seg_csv)
   write_csv(df_seg, path = seg_csv)
-  return(list(seg_csv = seg_csv, bv_boundary_txt = bv_boundary_txt))
+  return(seg_csv)
 }
 
 visualize_segments <- function(seg_csv, site_csv, bv_csv, dmrbv_csv, dst_dir,
@@ -316,18 +308,26 @@ visualize_segments <- function(seg_csv, site_csv, bv_csv, dmrbv_csv, dst_dir,
   to_pdf(plot(ggarrange(plotlist = gs, nrow = 2)),
          path = hist_pdf, w = width, h = height)
 
-  summary_csv <- file.path(dst_dir,
-                           sub('.csv(|.gz)$', '.summary.csv',
+  feature_csv <- file.path(dst_dir,
+                           sub('.csv(|.gz)$', '.feature.csv',
                                basename(dmrbv_csv)))
-  message('>>> Write the summary:\t', summary_csv)
+  message('>>> Write feature counts:\t', feature_csv)
   df_bv_raw <- read_bv_csv(bv_csv, drop_na = FALSE)
-  df_site <- read_csv_quietly(site_csv)
-  df_sum <- tibble(site = nrow(df_bv_raw),
-                   site_filtered = nrow(df_site),
-                   site_filtered_notna = nrow(df_seg),
-                   seg = length(unique(df_seg$segment)),
-                   seg_dmr = nrow(read_csv_quietly(dmrbv_csv)))
-  write_csv(df_sum, path = summary_csv)
+  df_feature <- tibble(feature = c('probe sites', 'filtered sites',
+                                   'available filtered sites',
+                                   'detected segments',
+                                   'differentially methylated segments'),
+                       count = c(nrow(df_bv_raw),
+                                 sum(read_csv_quietly(site_csv)$name %in%
+                                     df_bv_raw$name),
+                                 nrow(df_seg), length(unique(df_seg$segment)),
+                                 nrow(read_csv_quietly(dmrbv_csv))))
+  write_csv(df_feature, path = feature_csv)
+
+  feature_pdf <- sub('.csv$', '.pdf', feature_csv)
+  message('>>> Write feature counts:\t', feature_csv)
+  to_pdf(plot(ggbarplot(df_feature, 'feature', 'count', orientation = "horiz")),
+         path = hist_pdf, w = width, h = height)
 }
 
 read_bv_csv <- function(path, drop_na = TRUE) {
