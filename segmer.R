@@ -10,6 +10,8 @@ Usage:
                  [--ar=<ratio>] [--out=<dir>] <dmrbv_csv>
   segmer plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <bv_csv> <seg_csv>
               <dmrbv_csv>
+  segmer dmp [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--out=<dir>] <site_csv>
+             <bv_csv>
   segmer --session
   segmer --version
   segmer -h|--help
@@ -20,6 +22,7 @@ Commands:
                     (Sites including NA are ignored.)
   cluster           Execute clustering and draw the heatmap
   plot              Visualize methylation data
+  dmp               Determine differentially methylated positions
 
 Options:
   -v                Run with debug logging
@@ -33,6 +36,7 @@ Options:
   --dist=<str>      Specify the method of stats::dist [default: euclidean]
   --hclust=<str>    Specify the method of stats::hclust [default: ward.D2]
   --ar=<ratio>      Specify the aspect ratio of figures [default: 13:8]
+  --sd-cutoff=<dbl> Specify the SD cutoff [default: 0.2]
   --session         Print session information and exit ({devtools} is required)
   --version         Print version and exit
   -h, --help        Print help and exit
@@ -104,17 +108,17 @@ main <- function(opts, root_dir = fetch_script_root()) {
     } else {
       aspect_ratio <- NULL
     }
+    if (! is.null(opts[['--seed']])) {
+      message('>>> Set a random seed')
+      set.seed(opts[['--seed']])
+      message(opts[['--seed']])
+    }
 
     if (opts[['bed']]) {
       prepare_site_csv(dst_dir = dst_dir,
                        platform = opts[['--platform']],
                        unfilter = opts[['--unfilter']])
     } else if (opts[['segment']]) {
-      if (! is.null(opts[['--seed']])) {
-        message('>>> Set a random seed')
-        set.seed(opts[['--seed']])
-        message(opts[['--seed']])
-      }
       site_csv <- normalizePath(opts[['<site_csv>']])
       bv_csv <- normalizePath(opts[['<bv_csv>']])
       seg_csv <- segment_sites(site_csv = site_csv, bv_csv = bv_csv,
@@ -138,6 +142,11 @@ main <- function(opts, root_dir = fetch_script_root()) {
                          bv_csv = bv_csv, dmrbv_csv = dmrbv_csv,
                          dst_dir = dst_dir, width = aspect_ratio[1],
                          height = aspect_ratio[2])
+    } else if (opts[['dmp']]) {
+      write_dmp_bv(bv_csv = normalizePath(opts[['<bv_csv>']]),
+                   site_csv = normalizePath(opts[['<site_csv>']]),
+                   dst_dir = dst_dir,
+                   sd_cutoff = as.numeric(opts[['--sd-cutoff']]))
     }
   }
 }
@@ -447,6 +456,23 @@ visualize_segments <- function(seg_csv, site_csv, bv_csv, dmrbv_csv, dst_dir,
 
 format_digit <- function(i) {
   return(format(i, scientific = FALSE))
+}
+
+
+### dmp
+
+write_dmp_bv <- function(bv_csv, site_csv, dst_dir, sd_cutoff = 0.1) {
+  dmp_csv <- file.path(dst_dir,
+                       str_c(sub('.csv(|.gz)$', '', basename(bv_csv)),
+                             sub('(|.bed).csv(|.gz)$', '',
+                                 basename(site_csv)),
+                             'bv.dmp.csv', sep = '.'))
+  df_bv <- filter(read_bv_csv(path = bv_csv),
+                  name %in% read_csv_quietly(path = site_csv)$name)
+  filtered_names <- filter(bv2var(df_bv),
+                           variance > (sd_cutoff ^ 2))$name
+  message('>>> Write DMP beta-values:\t', dmp_csv)
+  write_csv(filter(df_bv, name %in% filtered_names), path = dmp_csv)
 }
 
 
