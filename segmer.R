@@ -4,103 +4,93 @@
 
 Usage:
   segmer bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmer dmr [-v] [--seed=<int>] [--sd-cutoff=<int>] [--ar=<ratio>]
-             [--out=<dir>] <site_csv> <bv_csv>
-  segmer cluster [-v] [--k=<int>] [--dist=<str>] [--hclust=<str>]
-                 [--ar=<ratio>] [--out=<dir>] <dmrbv_csv>
-  segmer plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <bv_csv> <seg_csv>
-              <dmrbv_csv>
-  segmer dmp [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--out=<dir>] <site_csv>
-             <bv_csv>
+  segmer dmr [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--ar=<ratio>] [--out=<dir>] <site_csv>
+             <mv_csv>
+  segmer cluster [-v] [--k=<int>] [--dist=<str>] [--hclust=<str>] [--ar=<ratio>] [--out=<dir>]
+                 <dmrmv_csv>
+  segmer plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv> <seg_csv> <dmrmv_csv>
+  segmer dmp [-v] [--sd-cutoff=<dbl>] [--qv-cutoff=<dbl>] [--out=<dir>] <site_csv> <mv_csv>
+  segmer idat2m [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer --session
   segmer --version
   segmer -h|--help
 
 Commands:
-  bed               Download annotation data and write a target site CSV file
-  segment           Segment target sites (Sites including NA are ignored.)
-  cluster           Execute clustering and draw the heatmap
-  plot              Visualize methylation data
-  dmp               Determine differentially methylated positions
+  bed                 Download annotation data and write a target site CSV file
+  dmr                 Segment target sites (Sites including NA are ignored.)
+  cluster             Execute clustering and draw the heatmap
+  plot                Visualize methylation data
+  dmp                 Determine differentially methylated positions
+  idat2m              Calculate M-values using IDAT files from Illumina methylation arrays
 
 Options:
-  -v                Run with debug logging
-  --platform=<str>  Specify a methylation assay platform [default: EPIC]
-                      choice: EPIC, hm450, hm27
-  --unfilter        Skip recommended probe filtering
-  --out=<dir>       Set an output directory [default: .]
-  --seed=<int>      Set a random seed
-  --k=<int>         Specify the number of clusters [default: 3]
-  --dist=<str>      Specify the method of stats::dist [default: euclidean]
-  --hclust=<str>    Specify the method of stats::hclust [default: ward.D2]
-  --ar=<ratio>      Specify the aspect ratio of figures [default: 13:8]
-  --sd-cutoff=<dbl> Specify the SD cutoff [default: 0.1]
-  --session         Print session information and exit ({devtools} is required)
-  --version         Print version and exit
-  -h, --help        Print help and exit
+  -v                  Run with debug logging
+  --platform=<str>    Specify a methylation assay platform [default: EPIC]
+                        choice: EPIC, hm450, hm27
+  --unfilter          Skip recommended probe filtering
+  --out=<dir>         Specify an output directory [default: .]
+  --seed=<int>        Specify a random seed
+  --sd-cutoff=<dbl>   Specify the SD cutoff [default: 1]
+  --k=<int>           Specify the number of clusters [default: 3]
+  --dist=<str>        Specify the method of stats::dist [default: euclidean]
+  --hclust=<str>      Specify the method of stats::hclust [default: ward.D2]
+  --ar=<ratio>        Specify the aspect ratio of figures [default: 13:8]
+  --qv-cutoff=<dbl>   Specify the cutoff of adjusted p-values [default: 0.01]
+  --offset=<dbl>      Specify the offset for M-values [default: 1]
+  --session           Print session information and exit (using {devtools})
+  --version           Print version and exit
+  -h, --help          Print help and exit
 
 Arguments:
-  <site_csv>        Path to a target site CSV or BED file
-                    (created by `segmer bed`)
-  <bv_csv>          Path to a methylation CSV file
-                      the 1st column: probe names
-                      the other columns: beta-values
-  <dmrbv_csv>       Path to a segmental beta-value CSV file of DMRs
-                    (`*.seg.bv.mean.dmr.csv` created by `segmer segment`)
-  <seg_csv>         Path to a segment CSV file
-                    (`*.seg.csv` created by `segmer segment`)
+  <site_csv>          Path to a target site CSV or BED file (created by `segmer bed`)
+  <mv_csv>            Path to a methylation CSV file
+                        the 1st column: probe names
+                        the other columns: M-values
+  <dmrmv_csv>         Path to a segmental M-value CSV file of DMRs
+                      (`*.seg.mv.dmr.csv` created by `segmer dmr`)
+  <seg_csv>           Path to a segment CSV file (`*.seg.csv` created by `segmer dmr`)
+  <idat_dir>          Path to an directory including IDAT files
+  <out_csv>           Path to an output CSV file
 ' -> doc
 
-command_version <- 'v0.0.9'
+command_version <- 'v0.1.0'
 
 
 ### controler
 
-fetch_script_root <- function() {
-  ca <- commandArgs(trailingOnly = FALSE)
-  fa <- ca[grepl('^--file=', ca)]
-  if (length(fa) == 1) {
-    f <- sub('--file=', '', fa)
-    l <- Sys.readlink(f)
-    if (is.na(l)) {
-      script <- normalizePath(f)
-    } else if (startsWith(l, '/')) {
-      script <- normalizePath(l)
-    } else {
-      script <- normalizePath(file.path(dirname(f), l))
-    }
-    return(dirname(script))
+load_packages <- function(opts) {
+  message('>>> Load packages')
+  if (opts[['bed']]) {
+    add_pkgs <- 'GenomicRanges'
+  } else if (opts[['dmr']]) {
+    add_pkgs <- c('changepoint', 'parallel')
+  } else if (opts[['cluster']]) {
+    add_pkgs <- c('gplots', 'RColorBrewer')
+  } else if (opts[['plot']]) {
+    add_pkgs <- c('ggpubr', 'parallel')
+  } else if (opts[['dmp']]) {
+    add_pkgs <- 'parallel'
+  } else if (opts[['idat2m']]) {
+    add_pkgs <- c('IlluminaHumanMethylationEPICmanifest', 'minfi')
   } else {
-    return(normalizePath(getwd()))
+    add_pkgs <- NULL
   }
+  print(suppressMessages(sapply(c('tidyverse', add_pkgs),
+                                library, character.only = TRUE)))
 }
 
-main <- function(opts, root_dir = fetch_script_root()) {
+main <- function(opts) {
   options(warn = 1)
-  if (opts[['-v']]) {
-    print(opts)
-  }
+  if (opts[['-v']]) print(opts)
 
   if (opts[['--session']]) {
     library('devtools', quietly = TRUE)
     print(devtools::session_info(pkgs = c('changepoint', 'GenomicRanges',
-                                          'gplots', 'ggpubr', 'RColorBrewer',
-                                          'tidyverse')))
+                                          'gplots', 'ggpubr', 'minfi',
+                                          'RColorBrewer', 'tidyverse')))
   } else {
-    if (opts[['bed']]) {
-      add_pkgs <- 'GenomicRanges'
-    } else if (opts[['dmr']]) {
-      add_pkgs <- c('changepoint', 'ggpubr', 'parallel')
-    } else if (opts[['cluster']]) {
-      add_pkgs <- c('gplots', 'RColorBrewer')
-    } else if (opts[['plot']]) {
-      add_pkgs <- c('ggpubr', 'parallel')
-    } else {
-      add_pkgs <- NULL
-    }
-    load_packages(pkgs = c('tidyverse', add_pkgs))
+    load_packages(opts = opts)
     make_dir(path = opts[['--out']])
-    dst_dir <- normalizePath(opts[['--out']])
     if (opts[['cluster']] | opts[['plot']]) {
       aspect_ratio <- as.integer(str_split(opts[['--ar']], pattern = ':',
                                            n = 2, simplify = TRUE))
@@ -114,36 +104,35 @@ main <- function(opts, root_dir = fetch_script_root()) {
     }
 
     if (opts[['bed']]) {
-      prepare_site_csv(dst_dir = dst_dir,
+      prepare_site_csv(dst_dir = opts[['--out']],
                        platform = opts[['--platform']],
                        unfilter = opts[['--unfilter']])
     } else if (opts[['dmr']]) {
-      segment_sites(site_csv = normalizePath(opts[['<site_csv>']]),
-                    bv_csv = normalizePath(opts[['<bv_csv>']]),
-                    dst_dir = dst_dir,
+      segment_sites(site_csv = opts[['<site_csv>']],
+                    mv_csv = opts[['<mv_csv>']], dst_dir = opts[['--out']],
                     sd_cutoff = as.numeric(opts[['--sd-cutoff']]))
     } else if (opts[['cluster']]) {
-      cluster_segments(dmrbv_csv = normalizePath(opts[['<dmrbv_csv>']]),
-                       dst_dir = dst_dir, k = opts[['--k']],
+      cluster_segments(dmrmv_csv = opts[['<dmrmv_csv>']],
+                       dst_dir = opts[['--out']], k = opts[['--k']],
                        dist_method = opts[['--dist']],
                        hclust_method = opts[['--hclust']],
                        width = aspect_ratio[1], height = aspect_ratio[2])
     } else if (opts[['plot']]) {
-      site_csv <- normalizePath(opts[['<site_csv>']])
-      bv_csv <- normalizePath(opts[['<bv_csv>']])
-      seg_csv <- normalizePath(opts[['<seg_csv>']])
-      dmrbv_csv <- normalizePath(opts[['<dmrbv_csv>']])
-      visualize_bv(site_csv = site_csv, bv_csv = bv_csv, dst_dir = dst_dir,
-                   width = aspect_ratio[1], height = aspect_ratio[2])
-      visualize_segments(seg_csv = seg_csv, site_csv = site_csv,
-                         bv_csv = bv_csv, dmrbv_csv = dmrbv_csv,
-                         dst_dir = dst_dir, width = aspect_ratio[1],
+      visualize_segments(site_csv = opts[['<site_csv>']],
+                         mv_csv = opts[['<mv_csv>']],
+                         seg_csv = opts[['<seg_csv>']],
+                         dmrmv_csv = opts[['<dmrmv_csv>']],
+                         dst_dir = opts[['--out']], width = aspect_ratio[1],
                          height = aspect_ratio[2])
     } else if (opts[['dmp']]) {
-      write_dmp_bv(bv_csv = normalizePath(opts[['<bv_csv>']]),
-                   site_csv = normalizePath(opts[['<site_csv>']]),
-                   dst_dir = dst_dir,
+      write_dmp_mv(mv_csv = opts[['<mv_csv>']],
+                   site_csv = opts[['<site_csv>']], dst_dir = opts[['--out']],
+                   qv_cutoff = as.numeric(opts[['--qv-cutoff']]),
                    sd_cutoff = as.numeric(opts[['--sd-cutoff']]))
+    } else if (opts[['idat2m']]) {
+      convert_idat_to_mv(idat_dir = opts[['<idat_dir>']],
+                         out_csv = opts[['<out_csv>']],
+                         offset = as.numeric(opts[['--offset']]))
     }
   }
 }
@@ -201,16 +190,16 @@ download_annotation_data <- function(dst_dir = '.', platform = 'EPIC',
 }
 
 
-### segmer segment
+### segmer dmr
 
-segment_sites <- function(site_csv, bv_csv, dst_dir, n_cpu = detectCores(),
-                          cpt_method = 'PELT', mtc_method = 'bonferroni',
-                          sd_cutoff = 0.1) {
-  df_site <- read_csv_quietly(site_csv)
-  df_bv <- filter(read_bv_csv(path = bv_csv), name %in% df_site$name)
+segment_sites <- function(site_csv, mv_csv, dst_dir, sd_cutoff = 1,
+                          n_cpu = detectCores(), cpt_method = 'PELT',
+                          mtc_method = 'bonferroni') {
+  df_site <- read_site_csv(site_csv)
+  df_mv <- filter(read_mv_csv(path = mv_csv), name %in% df_site$name)
   cl <- makeCluster(n_cpu)
   df_p <- mutate(arrange(inner_join(df_site,
-                                    append_shapiro_wilk_p(cl, df_bv),
+                                    shapiro_wilk_test(cl, df_mv),
                                     by = 'name'),
                          chrom, chromStart),
                  mlogp = -log10(pval),
@@ -241,40 +230,35 @@ segment_sites <- function(site_csv, bv_csv, dst_dir, n_cpu = detectCores(),
           ' segments')
 
   seg_csv <- file.path(dst_dir,
-                       str_c(sub('.csv(|.gz)$', '', basename(bv_csv)),
-                             sub('(|.bed).csv(|.gz)$', '', basename(site_csv)),
+                       str_c(sub('.csv(|.gz|.bz2)$', '', basename(mv_csv)),
+                             sub('(|.bed).csv(|.gz|.bz2)$', '',
+                                 basename(site_csv)),
                              'seg.csv', sep = '.'))
   message('>>> Write a segment CSV:\t', seg_csv)
   write_csv(df_seg, path = seg_csv)
 
   message('>>> Calculate segmental median values')
-  df_segbv <- summarize_all(group_by(select(left_join(select(df_seg,
+  df_segmv <- summarize_all(group_by(select(left_join(select(df_seg,
                                                              name, segment),
-                                                      df_bv, by = 'name'),
+                                                      df_mv, by = 'name'),
                                             -name),
                                      segment),
                             median,
                             .groups = 'drop')
   out_prefix <- file.path(dst_dir,
-                          str_c(sub('.csv(|.gz)$', '', basename(seg_csv)),
-                                'bv.median', sep = '.'))
-  segbv_csv <- str_c(out_prefix, '.all.csv')
-  message('>>> Write a segmental median CSV:\t', segbv_csv)
-  write_csv(df_segbv, path = segbv_csv)
+                          str_c(sub('.csv(|.gz|.bz2)$', '', basename(seg_csv)),
+                                'mv', sep = '.'))
+  segmv_csv <- str_c(out_prefix, '.all.csv')
+  message('>>> Write a segmental value CSV:\t', segmv_csv)
+  write_csv(df_segmv, path = segmv_csv)
 
-  df_dmrbv <- filter_bv_by_sd(df_segbv,
-                              sd_cutoff = sd_cutoff)
-  dmrbv_csv <- str_c(out_prefix, '.dmr.csv')
-  message('>>> Write a DMR segmental median CSV:\t', dmrbv_csv)
-  write_csv(df_dmrbv, path = dmrbv_csv)
-  message('DMR segments:\t', nrow(df_dmrbv), ' / ', nrow(df_segbv))
-}
-
-append_shapiro_wilk_p <- function(cl, df_bv) {
-   message('>>> Perform Shapiro-Wilk normality tests')
-  return(mutate(select(df_bv, 1),
-                pval = parApply(cl, select(df_bv, -1), 1,
-                                function(v) return(shapiro.test(v)$p.value))))
+  df_dmrmv <- filter(df_segmv,
+                     segment %in% filter_by_sd(df_segmv,
+                                               sd_cutoff = sd_cutoff)$segment)
+  dmrmv_csv <- str_c(out_prefix, '.dmr.csv')
+  message('>>> Write a DMR segmental value CSV:\t', dmrmv_csv)
+  write_csv(df_dmrmv, path = dmrmv_csv)
+  message('DMR segments:\t', nrow(df_dmrmv), ' / ', nrow(df_segmv))
 }
 
 read_site_csv <- function(path) {
@@ -285,66 +269,83 @@ read_site_csv <- function(path) {
   }
 }
 
-read_bv_csv <- function(path, drop_na = TRUE) {
-  df_bv <- read_csv_quietly(path)
-  if (drop_na) df_bv <- drop_na(df_bv)
-  stopifnot(nrow(df_bv) > 1, ncol(df_bv) > 4)
-  return(mutate(dplyr::rename(df_bv, name = 1), name = as.character(name)))
+shapiro_wilk_test <- function(cl, df_mv) {
+  message('>>> Perform Shapiro-Wilk normality tests')
+  return(mutate(select(df_mv, 1),
+                pval = parApply(cl, select(df_mv, -1), 1,
+                                function(v) return(shapiro.test(v)$p.value))))
 }
 
-bv2var <- function(df_bv) {
-  return(mutate(select(df_bv, 1), variance = apply(select(df_bv, -1), 1, var)))
-}
-
-filter_bv_by_sd <- function(df_bv, sd_cutoff = 0.1) {
-  return(filter(df_bv,
-                bv2var(df_bv)$variance > (sd_cutoff ^ 2)))
-}
-
-determine_bv_boundary <- function(df_bv, ...) {
-  message('>>> Determine the boundary by K-means')
-  bv <- df2num(df_bv)
-  df_b <- summarize(group_by(tibble(bv = bv,
-                                    label = kmeans(bv,
-                                                   centers = 2,
-                                                   ...)$cluster),
-                             label),
-                    min_bv = min(bv), max_bv = max(bv),
-                    .groups = 'drop')
-  return(mean(max(df_b$min_bv), min(df_b$max_bv)))
-}
-
-digitalize_bv <- function(df_bv, bv_boundary = NULL) {
-  bvb <- ifelse(is.null(bv_boundary),
-                determine_bv_boundary(df_bv = df_bv), bv_boundary)
-  message('>>> Digitalize beta-values by the boundary:\t', bvb)
-  return(cbind(select(df_bv, 1),
-               mutate_all(as_tibble(select(df_bv, -1) > bvb),
-                          as.integer)))
+read_mv_csv <- function(path, dropna = TRUE) {
+  df_mv <- read_csv_quietly(path)
+  if (dropna) df_mv <- drop_na(df_mv)
+  stopifnot(nrow(df_mv) > 1, ncol(df_mv) > 4)
+  return(mutate(dplyr::rename(df_mv, name = 1), name = as.character(name)))
 }
 
 df2num <- function(df) {
   return(as.vector(as.matrix(select_if(df, is.numeric))))
 }
 
+determine_mv_boundary <- function(df_mv, ...) {
+  message('>>> Determine the boundary by K-means')
+  mv <- df2num(df_mv)
+  df_b <- summarize(group_by(tibble(mv = mv,
+                                    label = kmeans(mv,
+                                                   centers = 2,
+                                                   ...)$cluster),
+                             label),
+                    min_mv = min(mv), max_mv = max(mv),
+                    .groups = 'drop')
+  return(mean(max(df_b$min_mv), min(df_b$max_mv)))
+}
+
+digitalize_mv <- function(df_mv, mv_boundary = NULL) {
+  mvb <- ifelse(is.null(mv_boundary),
+                determine_mv_boundary(df_mv = df_mv), mv_boundary)
+  message('>>> Classify M-values by the boundary:\t', mvb)
+  return(cbind(select(df_mv, 1),
+               mutate_all(as_tibble(select(df_mv, -1) > mvb),
+                          as.integer)))
+}
+
+mv2var <- function(df_mv) {
+  return(mutate(select(df_mv, 1), variance = apply(select(df_mv, -1), 1, var)))
+}
+
+filter_by_sd <- function(df_v, sd_cutoff) {
+  message('>>> Filter values by variance:\t> ', sd_cutoff)
+  return(filter(df_v, mv2var(df_v)$variance > (sd_cutoff ^ 2)))
+}
+
+filter_by_digital_bv <- function(df_mv, sd_cutoff, mv_boundary = NULL) {
+  return(filter(df_mv,
+                df_mv[[1]] %in%
+                  filter_by_sd(digitalize_mv(df_mv,
+                                             mv_boundary = mv_boundary),
+                               sd_cutoff = sd_cutoff)[[1]]))
+}
+
 
 ### segmer cluster
 
-cluster_segments <- function(dmrbv_csv, dst_dir, k = 3,
+cluster_segments <- function(dmrmv_csv, dst_dir, k = 3,
                              dist_method = 'euclidean',
                              hclust_method = 'ward.D2', width = 13,
                              height = 8) {
   stopifnot(k > 1)
   distfun <- function(...) return(dist(..., method = dist_method))
   hclustfun <- function(...) return(hclust(..., method = hclust_method))
-  out_prefix <- str_c(sub('.csv(|.gz)$', '', dmrbv_csv),
-                      dist_method, hclust_method,
-                      str_c('k', k), sep = '.')
-  df_dmrbv <- read_csv_quietly(dmrbv_csv)
+  out_prefix <- file.path(dst_dir,
+                          str_c(sub('.csv(|.gz|.bz2)$', '',
+                                    basename(dmrmv_csv)),
+                                dist_method, hclust_method,
+                                str_c('k', k), sep = '.'))
+  df_dmrmv <- read_csv_quietly(dmrmv_csv)
   hclust_csv <- str_c(out_prefix, '.hclust.csv')
   message('>>> Write an observed cluster CSV:\t', hclust_csv)
-  mt_top <- as.matrix(column_to_rownames(df_dmrbv,
-                                         var = colnames(df_dmrbv)[1]))
+  mt_top <- as.matrix(column_to_rownames(df_dmrmv,
+                                         var = colnames(df_dmrmv)[1]))
   hclust_hclusts <- stats::cutree(hclustfun(distfun(t(mt_top))), k = k)
   write_csv(tibble(sample_id = names(hclust_hclusts),
                    observed_cluster = hclust_hclusts),
@@ -369,39 +370,39 @@ heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
 
 ### segmer plot
 
-visualize_bv <- function(site_csv, bv_csv, dst_dir, n_cpu = detectCores(),
-                         width = 13, height = 8) {
-  df_site <- read_csv_quietly(site_csv)
-  df_bv <- read_bv_csv(path = bv_csv)
+visualize_segments <- function(site_csv, mv_csv, seg_csv, dmrmv_csv, dst_dir,
+                               n_cpu = detectCores(), width = 13, height = 8) {
+  df_site <- read_site_csv(site_csv)
+  df_mv_raw <- read_mv_csv(mv_csv, dropna = FALSE)
+  df_mv <- drop_na(df_mv_raw)
   out_prefix <- file.path(dst_dir,
-                          str_c(sub('.csv(|.gz)$', '', basename(bv_csv)),
-                                sub('(|.bed).csv(|.gz)$', '',
+                          str_c(sub('.csv(|.gz|.bz2)$', '', basename(mv_csv)),
+                                sub('(|.bed).csv(|.gz|.bz2)$', '',
                                     basename(site_csv)),
                                 sep = '.'))
 
   hist_pdf <- str_c(out_prefix, '.hist.pdf')
-  message('>>> Plot a beta-value histogram:\t', hist_pdf)
+  message('>>> Plot an M-value histogram:\t', hist_pdf)
   to_pdf(plot(gghistogram(rbind(tibble(probe = 'unmasked',
-                                       bv = df2num(filter(df_bv,
+                                       mv = df2num(filter(df_mv,
                                                           name %in%
                                                             df_site$name))),
                                 tibble(probe = 'masked',
-                                       bv = df2num(filter(df_bv,
+                                       mv = df2num(filter(df_mv,
                                                           ! name %in%
                                                             df_site$name)))),
-                          x = 'bv', fill = 'probe', position = 'stack',
+                          x = 'mv', fill = 'probe', position = 'stack',
                           color = NA, alpha = 0.6,
                           palette = get_palette('nejm', 2),
-                          xlab = 'beta-value', ylab = 'site count',
+                          xlab = 'M-value', ylab = 'site count',
                           bins = 30)),
          path = hist_pdf, w = width, h = height)
 
   cl <- makeCluster(n_cpu)
   df_p <- inner_join(df_site,
-                     mutate(append_shapiro_wilk_p(cl,
-                                                  filter(df_bv,
-                                                         name %in%
-                                                           df_site$name)),
+                     mutate(shapiro_wilk_test(cl,
+                                              filter(df_mv,
+                                                     name %in% df_site$name)),
                             mlogp = -log10(pval)),
                      by = 'name')
   stopCluster(cl)
@@ -417,12 +418,9 @@ visualize_bv <- function(site_csv, bv_csv, dst_dir, n_cpu = detectCores(),
                 scale_x_continuous(labels = format_digit)),
            path = p, w = width, h = height)
   }
-}
 
-visualize_segments <- function(seg_csv, site_csv, bv_csv, dmrbv_csv, dst_dir,
-                               width = 13, height = 8) {
   df_seg <- read_csv_quietly(path = seg_csv)
-  hist_pdf <- file.path(dst_dir, sub('.csv(|.gz)$', '.hist.pdf',
+  hist_pdf <- file.path(dst_dir, sub('.csv(|.gz|.bz2)$', '.hist.pdf',
                                      basename(seg_csv)))
   message('>>> Plot segmental histograms:\t', hist_pdf)
   segment2len <- function(s) return(1 - eval(parse(text = sub('^.*:', '', s))))
@@ -444,23 +442,21 @@ visualize_segments <- function(seg_csv, site_csv, bv_csv, dmrbv_csv, dst_dir,
          path = hist_pdf, w = width, h = height)
 
   feature_csv <- file.path(dst_dir,
-                           sub('.csv(|.gz)$', '.feature.csv',
-                               basename(dmrbv_csv)))
+                           sub('.csv(|.gz|.bz2)$', '.feature.csv',
+                               basename(dmrmv_csv)))
   message('>>> Write feature counts:\t', feature_csv)
-  df_bv_raw <- read_bv_csv(bv_csv, drop_na = FALSE)
   df_feature <- tibble(feature = c('differentially methylated segments',
                                    'determined segments',
                                    'available filtered sites',
                                    'filtered sites', 'probe sites'),
-                       count = c(nrow(read_csv_quietly(dmrbv_csv)),
+                       count = c(nrow(read_csv_quietly(dmrmv_csv)),
                                  length(unique(df_seg$segment)), nrow(df_seg),
-                                 sum(read_csv_quietly(site_csv)$name %in%
-                                     df_bv_raw$name),
-                                 nrow(df_bv_raw)))
+                                 sum(df_site$name %in% df_mv_raw$name),
+                                 nrow(df_mv_raw)))
   write_csv(df_feature, path = feature_csv)
 
   feature_pdf <- sub('.csv$', '.pdf', feature_csv)
-  message('>>> Write feature counts:\t', feature_csv)
+  message('>>> Plot feature counts:\t', feature_csv)
   to_pdf(plot(ggbarplot(df_feature, x = 'feature', y = 'count', fill = 'navy',
                         color = 'navy', alpha = 0.4, orientation = 'horiz',
                         label = TRUE, lab.hjust = -0.2) +
@@ -477,16 +473,67 @@ format_digit <- function(i) {
 
 ### dmp
 
-write_dmp_bv <- function(bv_csv, site_csv, dst_dir, sd_cutoff = 0.1) {
+write_dmp_mv <- function(mv_csv, site_csv, dst_dir, sd_cutoff = 1,
+                         qv_cutoff = 0.01, n_cpu = detectCores(),
+                         mtc_method = 'bonferroni') {
   dmp_csv <- file.path(dst_dir,
-                       str_c(sub('.csv(|.gz)$', '', basename(bv_csv)),
-                             sub('(|.bed).csv(|.gz)$', '',
+                       str_c(sub('.csv(|.gz|.bz2)$', '', basename(mv_csv)),
+                             sub('(|.bed).csv(|.gz|.bz2)$', '',
                                  basename(site_csv)),
-                             'bv.dmp.csv', sep = '.'))
-  df_bv <- filter(read_bv_csv(path = bv_csv),
+                             'mv.dmp.csv', sep = '.'))
+  df_mv <- filter(read_mv_csv(path = mv_csv),
                   name %in% read_csv_quietly(path = site_csv)$name)
-  message('>>> Write DMP beta-values:\t', dmp_csv)
-  write_csv(filter_bv_by_sd(df_bv, sd_cutoff = sd_cutoff), path = dmp_csv)
+  df_mvf <- filter(df_mv,
+                   name %in% filter_by_sd(df_mv, sd_cutoff = sd_cutoff)$name)
+  message('passing sites:\t', nrow(df_mvf), ' / ', nrow(df_mv))
+  cl <- makeCluster(n_cpu)
+  df_dmpmv <- filter(df_mvf,
+                     name %in%
+                       filter(mutate(shapiro_wilk_test(cl, df_mvf),
+                                     qval = p.adjust(pval,
+                                                     method = mtc_method)),
+                              qval < qv_cutoff)$name)
+  stopCluster(cl)
+  message('DMP sites:\t', nrow(df_dmpmv), ' / ', nrow(df_mv))
+  message('>>> Write DMP value CSV:\t', dmp_csv)
+  write_csv(df_dmpmv, path = dmp_csv)
+}
+
+
+### idat2m
+
+convert_idat_to_mv <- function(idat_dir, out_csv, offset = 1) {
+  message('>>> Read IDAT files and calculate M-values:\t', idat_dir)
+  df_mv <- NULL
+  for (i in sort(fetch_idat_names(idat_dir = idat_dir))) {
+    message(i)
+    d <- calculate_mv_from_idat(i, offset = offset)
+    if (is.null(df_mv)) {
+      df_mv <- d
+    } else {
+      df_mv <- left_join(df_mv, d, by = 'name')
+    }
+  }
+  message('>>> Write M-values:\t', out_csv)
+  write_csv(arrange(df_mv, name), path = out_csv)
+}
+
+fetch_idat_names <- function(idat_dir) {
+  return(do.call(intersect,
+                 lapply(c('_Grn.idat$', '_Red.idat$'),
+                        function(s) {
+                          return(str_replace(list.files(idat_dir,
+                                                        pattern = s,
+                                                        full.names = TRUE),
+                                             s, ''))
+                        })))
+}
+
+calculate_mv_from_idat <- function(idat_name, offset = 1) {
+  rg <- preprocessIllumina(read.metharray(idat_name))
+  return(rownames_to_column(as.data.frame(log2((getMeth(rg) + offset) /
+                                               (getUnmeth(rg) + offset))),
+                            var = 'name'))
 }
 
 
@@ -502,11 +549,6 @@ download_file <- function(src, dst) {
 
 granges2tibble <- function(gr, var = 'name') {
   return(as_tibble(rownames_to_column(as(gr, 'data.frame'), var = var)))
-}
-
-load_packages <- function(pkgs) {
-  message('>>> Load packages')
-  print(suppressMessages(sapply(pkgs, library, character.only = TRUE)))
 }
 
 make_dir <- function(path) {
@@ -546,6 +588,6 @@ to_pdf <- function(graph, path, w = 10, h = 10) {
 if (! interactive()) {
   library('docopt', quietly = TRUE)
   main(opts = docopt::docopt(gsub('>\n +<', '> <',
-                                  gsub('\\]\n +\\[', '\\] \\[', doc)),
+                                  gsub('\\]\n +<', '\\] <', doc)),
                              version = command_version))
 }
