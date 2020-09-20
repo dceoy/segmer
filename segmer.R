@@ -4,12 +4,12 @@
 
 Usage:
   segmer bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmer dmr [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--ar=<ratio>] [--out=<dir>] <site_csv>
-             <mv_csv>
-  segmer cluster [-v] [--k=<int>] [--dist=<str>] [--hclust=<str>] [--ar=<ratio>] [--out=<dir>]
-                 <dmrmv_csv>
+  segmer dmr [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--kmeans-k=<int>] [--ar=<ratio>]
+             [--out=<dir>] <site_csv> <mv_csv>
+  segmer cluster [-v] [--cutree-k=<int>] [--hclust=<str>] [--dist=<str>] [--ar=<ratio>]
+                 [--out=<dir>] <dmrmv_csv>
   segmer plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv> <seg_csv> <dmrmv_csv>
-  segmer dmp [-v] [--sd-cutoff=<dbl>] [--out=<dir>] <site_csv> <mv_csv>
+  segmer dmp [-v] [--sd-cutoff=<dbl>] [--kmeans-k=<int>] [--out=<dir>] <site_csv> <mv_csv>
   segmer idat2m [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer idat2beta [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer --session
@@ -33,9 +33,10 @@ Options:
   --out=<dir>         Specify an output directory [default: .]
   --seed=<int>        Specify a random seed
   --sd-cutoff=<dbl>   Specify the SD cutoff
-  --k=<int>           Specify the number of clusters [default: 3]
-  --dist=<str>        Specify the method of stats::dist [default: euclidean]
+  --kmeans-k=<int>    Specify the number of clusters for K-means [default: 2]
+  --cutree-k=<int>    Specify the number of sample clusters [default: 3]
   --hclust=<str>      Specify the method of stats::hclust [default: ward.D2]
+  --dist=<str>        Specify the method of stats::dist [default: euclidean]
   --ar=<ratio>        Specify the aspect ratio of figures [default: 13:8]
   --offset=<dbl>      Specify the offset for M-values [default: 1]
   --session           Print session information and exit (using {devtools})
@@ -111,10 +112,12 @@ main <- function(opts) {
     } else if (opts[['dmr']]) {
       segment_sites(site_csv = opts[['<site_csv>']],
                     mv_csv = opts[['<mv_csv>']], dst_dir = opts[['--out']],
+                    kmeans_k = opts[['--kmeans-k']],
                     sd_cutoff = opts[['--sd-cutoff']])
     } else if (opts[['cluster']]) {
       cluster_segments(dmrmv_csv = opts[['<dmrmv_csv>']],
-                       dst_dir = opts[['--out']], k = opts[['--k']],
+                       dst_dir = opts[['--out']],
+                       cutree_k = opts[['--cutree-k']],
                        dist_method = opts[['--dist']],
                        hclust_method = opts[['--hclust']],
                        width = aspect_ratio[1], height = aspect_ratio[2])
@@ -128,6 +131,7 @@ main <- function(opts) {
     } else if (opts[['dmp']]) {
       write_dmp_mv(mv_csv = opts[['<mv_csv>']],
                    site_csv = opts[['<site_csv>']], dst_dir = opts[['--out']],
+                   kmeans_k = opts[['--kmeans-k']],
                    sd_cutoff = opts[['--sd-cutoff']])
     } else if (opts[['idat2m']]) {
       convert_idat_to_mv(idat_dir = opts[['<idat_dir>']],
@@ -196,8 +200,9 @@ download_annotation_data <- function(dst_dir = '.', platform = 'EPIC',
 
 ### segmer dmr
 
-segment_sites <- function(site_csv, mv_csv, dst_dir, sd_cutoff = NULL,
-                          n_cpu = detectCores(), cpt_method = 'PELT') {
+segment_sites <- function(site_csv, mv_csv, dst_dir, kmeans_k = 2,
+                          sd_cutoff = NULL, n_cpu = detectCores(),
+                          cpt_method = 'PELT') {
   df_site <- read_site_csv(site_csv)
   df_mv <- filter(read_met_csv(path = mv_csv), name %in% df_site$name)
   cl <- makeCluster(n_cpu)
@@ -257,6 +262,7 @@ segment_sites <- function(site_csv, mv_csv, dst_dir, sd_cutoff = NULL,
 
   df_dmrmv <- filter(df_segmv,
                      segment %in% filter_by_sd(df_segmv,
+                                               kmeans_k = kmeans_k,
                                                sd_cutoff = sd_cutoff)$segment)
   dmrmv_csv <- str_c(out_prefix, '.dmr.csv')
   message('>>> Write a DMR segmental value CSV:\t', dmrmv_csv)
@@ -280,71 +286,56 @@ shapiro_wilk_test <- function(cl, df_mv) {
 }
 
 read_met_csv <- function(path, dropna = TRUE) {
-  df_v <- read_csv_quietly(path)
-  if (dropna) df_v <- drop_na(df_v)
-  stopifnot(nrow(df_v) > 1, ncol(df_v) > 4)
-  return(mutate(dplyr::rename(df_v, name = 1), name = as.character(name)))
+  d <- read_csv_quietly(path)
+  if (dropna) d <- drop_na(d)
+  stopifnot(nrow(d) > 1, ncol(d) > 4)
+  return(mutate(dplyr::rename(d, name = 1), name = as.character(name)))
 }
 
-df2num <- function(df) {
-  return(as.vector(as.matrix(select_if(df, is.numeric))))
-}
-
-determine_boundary <- function(values, ...) {
-  message('>>> Determine the boundary using K-means')
-  df_b <- summarize(group_by(tibble(v = values,
-                                    label = kmeans(values,
-                                                   centers = 2,
-                                                   ...)$cluster),
-                             label),
-                    min_v = min(v), max_v = max(v), .groups = 'drop')
-  return(mean(max(df_b$min_v), min(df_b$max_v)))
-}
-
-mv2var <- function(df_mv) {
-  return(mutate(select(df_mv, 1), variance = apply(select(df_mv, -1), 1, var)))
-}
-
-filter_by_sd <- function(df_v, sd_cutoff = NULL, use_kmeans = TRUE) {
-  df_var <- mv2var(df_v)
-  if (! is.null(sd_cutoff)) {
-    message('>>> Filter sites by the specified SD threshold')
+filter_by_sd <- function(df_v, kmeans_k = 2, sd_cutoff = NULL, ...) {
+  df_var <- mutate(select(df_v, 1), variance = apply(select(df_v, -1), 1, var))
+  if (is.null(sd_cutoff)) {
+    message('>>> Determine the variance threshold using K-means (k = ',
+            kmeans_k, ')')
+    km <- kmeans(df_var$variance, centers = kmeans_k, ...)
+    df_k <- tibble(v = df_var$variance,
+                   label = km$cluster,
+                   is_highest = (km$cluster ==
+                                 which(km$center == max(km$center))))
+    var_co <- mean(min(filter(df_k, is_highest)$v),
+                   max(filter(df_k, ! is_highest)$v))
+    sd_co <- sqrt(var_co)
+    message('>>> Filter sites by the variance threshold')
+  } else {
     sd_co <- as.numeric(sd_cutoff)
     var_co <- sd_co ^ 2
-  } else if (use_kmeans) {
-    message('>>> Filter sites by the variance threshold from K-means')
-    var_co <- determine_boundary(df_var$variance)
-    sd_co <- sqrt(var_co)
-  } else {
-    message('>>> Filter sites by the variance of the whole data')
-    var_co <- var(df2num(df_v))
-    sd_co <- sqrt(var_co)
+    message('>>> Filter sites by the specified SD threshold')
   }
-  message('variance (SD) cutoff:\t', var_co, '\t(', sd_co, ')')
+  message('threshold variance (SD):\t', var_co, '  (', sd_co, ')')
   return(filter(df_v, df_var$variance > var_co))
 }
 
 
 ### segmer cluster
 
-cluster_segments <- function(dmrmv_csv, dst_dir, k = 3,
+cluster_segments <- function(dmrmv_csv, dst_dir, cutree_k = 3,
                              dist_method = 'euclidean',
                              hclust_method = 'ward.D2', width = 13,
                              height = 8) {
-  stopifnot(k > 1)
+  stopifnot(cutree_k > 1)
   distfun <- function(...) return(dist(..., method = dist_method))
   hclustfun <- function(...) return(hclust(..., method = hclust_method))
   out_prefix <- file.path(dst_dir,
                           str_c(sub('.csv(|.gz|.bz2)$', '',
                                     basename(dmrmv_csv)),
                                 dist_method, hclust_method,
-                                str_c('k', k), sep = '.'))
+                                str_c('k', cutree_k), sep = '.'))
   df_dmrmv <- read_csv_quietly(dmrmv_csv)
   hclust_csv <- str_c(out_prefix, '.hclust.csv')
   message('>>> Write an observed cluster CSV:\t', hclust_csv)
   mt_dmr <- as.matrix(column_to_rownames(df_dmrmv,
                                          var = colnames(df_dmrmv)[1]))
-  hclust_hclusts <- stats::cutree(hclustfun(distfun(t(mt_dmr))), k = k)
+  hclust_hclusts <- stats::cutree(hclustfun(distfun(t(mt_dmr))), k = cutree_k)
   write_csv(tibble(sample_id = names(hclust_hclusts),
                    observed_cluster = hclust_hclusts),
             path = hclust_csv)
@@ -478,6 +469,10 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, dmrmv_csv, dst_dir,
          path = feature_pdf, w = width, h = height)
 }
 
+df2num <- function(df) {
+  return(as.vector(as.matrix(select_if(df, is.numeric))))
+}
+
 format_digit <- function(i) {
   return(format(i, scientific = FALSE))
 }
@@ -485,13 +480,14 @@ format_digit <- function(i) {
 
 ### dmp
 
-write_dmp_mv <- function(mv_csv, site_csv, dst_dir, sd_cutoff = NULL) {
+write_dmp_mv <- function(mv_csv, site_csv, dst_dir, kmeans_k = 4,
+                         sd_cutoff = NULL) {
   df_site <- read_site_csv(site_csv)
   df_mv <- filter(read_met_csv(path = mv_csv), name %in% df_site$name)
   df_dmpmv <- filter(df_mv,
                      name %in% filter_by_sd(df_mv,
-                                            sd_cutoff = sd_cutoff,
-                                            use_kmeans = FALSE)$name)
+                                            kmeans_k = kmeans_k,
+                                            sd_cutoff = sd_cutoff)$name)
   message('DMP sites:\t', nrow(df_dmpmv), ' / ', nrow(df_mv))
   dmp_csv <- file.path(dst_dir,
                        str_c(sub('.csv(|.gz|.bz2)$', '', basename(mv_csv)),
@@ -614,7 +610,6 @@ to_pdf <- function(graph, path, w = 10, h = 10) {
 
 if (! interactive()) {
   library('docopt', quietly = TRUE)
-  main(opts = docopt::docopt(gsub('>\n +<', '> <',
-                                  gsub('\\]\n +<', '\\] <', doc)),
+  main(opts = docopt::docopt(gsub('\\]\n +\\[', '\\] \\[', doc),
                              version = command_version))
 }
