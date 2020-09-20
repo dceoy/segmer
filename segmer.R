@@ -4,12 +4,14 @@
 
 Usage:
   segmer bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmer dmr [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--kmeans-k=<int>] [--ar=<ratio>]
-             [--out=<dir>] <site_csv> <mv_csv>
-  segmer cluster [-v] [--cutree-k=<int>] [--hclust=<str>] [--dist=<str>] [--ar=<ratio>]
-                 [--out=<dir>] <dmrmv_csv>
-  segmer plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv> <seg_csv> <dmrmv_csv>
-  segmer dmp [-v] [--sd-cutoff=<dbl>] [--kmeans-k=<int>] [--out=<dir>] <site_csv> <mv_csv>
+  segmer dmr [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--kmeans-k=<int>]
+             [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv>
+  segmer cluster [-v] [--cutree-k=<int>] [--hclust=<str>] [--dist=<str>]
+                 [--ar=<ratio>] [--out=<dir>] <dmrmv_csv>
+  segmer plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv> <seg_csv>
+              <segmv_csv> <dmrmv_csv>
+  segmer dmp [-v] [--sd-cutoff=<dbl>] [--kmeans-k=<int>] [--out=<dir>]
+             <site_csv> <mv_csv>
   segmer idat2m [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer idat2beta [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer --session
@@ -33,7 +35,7 @@ Options:
   --out=<dir>         Specify an output directory [default: .]
   --seed=<int>        Specify a random seed
   --sd-cutoff=<dbl>   Specify the SD cutoff
-  --kmeans-k=<int>    Specify the number of clusters for K-means [default: 2]
+  --kmeans-k=<int>    Specify the number of clusters for K-means [default: 4]
   --cutree-k=<int>    Specify the number of sample clusters [default: 3]
   --hclust=<str>      Specify the method of stats::hclust [default: ward.D2]
   --dist=<str>        Specify the method of stats::dist [default: euclidean]
@@ -48,6 +50,8 @@ Arguments:
   <mv_csv>            Path to a methylation CSV file
                         the 1st column: probe names
                         the other columns: M-values
+  <segmv_csv>         Path to a segmental M-value CSV file
+                      (`*.seg.mv.all.csv` created by `segmer dmr`)
   <dmrmv_csv>         Path to a M-value CSV file of DMRs or DMPs
                       (`*.seg.mv.dmr.csv` created by `segmer dmr`)
   <seg_csv>           Path to a segment CSV file (`*.seg.csv` created by `segmer dmr`)
@@ -92,7 +96,7 @@ main <- function(opts) {
                                           'RColorBrewer', 'tidyverse')))
   } else {
     load_packages(opts = opts)
-    make_dir(path = opts[['--out']])
+    make_dir(opts[['--out']])
     if (opts[['cluster']] | opts[['plot']]) {
       aspect_ratio <- as.integer(str_split(opts[['--ar']], pattern = ':',
                                            n = 2, simplify = TRUE))
@@ -125,6 +129,7 @@ main <- function(opts) {
       visualize_segments(site_csv = opts[['<site_csv>']],
                          mv_csv = opts[['<mv_csv>']],
                          seg_csv = opts[['<seg_csv>']],
+                         segmv_csv = opts[['<segmv_csv>']],
                          dmrmv_csv = opts[['<dmrmv_csv>']],
                          dst_dir = opts[['--out']], width = aspect_ratio[1],
                          height = aspect_ratio[2])
@@ -189,7 +194,7 @@ download_annotation_data <- function(dst_dir = '.', platform = 'EPIC',
                 function(n) {
                   dst <- file.path(dst_dir, n)
                   download_file(src = file.path(url_body, n), dst = dst)
-                  csv_gz <- sub('.rds$', '.csv.gz', dst)
+                  csv_gz <- str_replace(dst, '.rds$', '.csv.gz')
                   message('>>> Convert RDS to CSV:\t', csv_gz)
                   d <- granges2tibble(readRDS(dst), var = 'name')
                   write_csv(d, path = csv_gz)
@@ -204,7 +209,7 @@ segment_sites <- function(site_csv, mv_csv, dst_dir, kmeans_k = 2,
                           sd_cutoff = NULL, n_cpu = detectCores(),
                           cpt_method = 'PELT') {
   df_site <- read_site_csv(site_csv)
-  df_mv <- filter(read_met_csv(path = mv_csv), name %in% df_site$name)
+  df_mv <- filter(read_met_csv(mv_csv), name %in% df_site$name)
   cl <- makeCluster(n_cpu)
   df_p <- mutate(arrange(inner_join(df_site,
                                     shapiro_wilk_test(cl, df_mv),
@@ -234,13 +239,12 @@ segment_sites <- function(site_csv, mv_csv, dst_dir, kmeans_k = 2,
   print(summary(summarize(group_by(df_seg, segment),
                           sites_per_segment = n(),
                           .groups = 'drop')))
-  message(nrow(df_seg), ' sites => ', length(unique(df_seg$segment)),
+  message(nrow(df_seg), ' sites => ', n_distinct(df_seg$segment),
           ' segments')
 
   seg_csv <- file.path(dst_dir,
-                       str_c(sub('.csv(|.gz|.bz2)$', '', basename(mv_csv)),
-                             sub('(|.bed).csv(|.gz|.bz2)$', '',
-                                 basename(site_csv)),
+                       str_c(fetch_csv_prefix(mv_csv),
+                             fetch_csv_prefix(site_csv, bed = TRUE),
                              'seg.csv', sep = '.'))
   message('>>> Write a segment CSV:\t', seg_csv)
   write_csv(df_seg, path = seg_csv)
@@ -254,8 +258,7 @@ segment_sites <- function(site_csv, mv_csv, dst_dir, kmeans_k = 2,
                             median,
                             .groups = 'drop')
   out_prefix <- file.path(dst_dir,
-                          str_c(sub('.csv(|.gz|.bz2)$', '', basename(seg_csv)),
-                                'mv', sep = '.'))
+                          fetch_csv_prefix(seg_csv, replacement = '.mv'))
   segmv_csv <- str_c(out_prefix, '.all.csv')
   message('>>> Write a segmental value CSV:\t', segmv_csv)
   write_csv(df_segmv, path = segmv_csv)
@@ -293,7 +296,7 @@ read_met_csv <- function(path, dropna = TRUE) {
 }
 
 filter_by_sd <- function(df_v, kmeans_k = 2, sd_cutoff = NULL, ...) {
-  df_var <- mutate(select(df_v, 1), variance = apply(select(df_v, -1), 1, var))
+  df_var <- row2var(df_v)
   if (is.null(sd_cutoff)) {
     message('>>> Determine the variance threshold using K-means (k = ',
             kmeans_k, ')')
@@ -315,6 +318,9 @@ filter_by_sd <- function(df_v, kmeans_k = 2, sd_cutoff = NULL, ...) {
   return(filter(df_v, df_var$variance > var_co))
 }
 
+row2var <- function(df_v) {
+  return(mutate(select(df_v, 1), variance = apply(select(df_v, -1), 1, var)))
+}
 
 ### segmer cluster
 
@@ -326,10 +332,9 @@ cluster_segments <- function(dmrmv_csv, dst_dir, cutree_k = 3,
   distfun <- function(...) return(dist(..., method = dist_method))
   hclustfun <- function(...) return(hclust(..., method = hclust_method))
   out_prefix <- file.path(dst_dir,
-                          str_c(sub('.csv(|.gz|.bz2)$', '',
-                                    basename(dmrmv_csv)),
-                                dist_method, hclust_method,
-                                str_c('k', cutree_k), sep = '.'))
+                          str_c(fetch_csv_prefix(dmrmv_csv), dist_method,
+                                hclust_method, str_c('k', cutree_k),
+                                sep = '.'))
   df_dmrmv <- read_csv_quietly(dmrmv_csv)
   hclust_csv <- str_c(out_prefix, '.hclust.csv')
   message('>>> Write an observed cluster CSV:\t', hclust_csv)
@@ -350,15 +355,14 @@ cluster_segments <- function(dmrmv_csv, dst_dir, cutree_k = 3,
                       ylab = str_c(ifelse(str_detect(dmrmv_csv, '.seg.mv.'),
                                           ' segment', ' site'),
                                    '  (total: ', nrow(mt_dmr), ')'),
-                      margins = c(max(nchar(colnames(mt_dmr))) * 0.3 + 4,
-                                  max(nchar(rownames(mt_dmr))) * 0.2 + 4)),
+                      margins = c(6, 10)),
          path = heatmap_pdf, w = width, h = height)
 }
 
 heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
                          ...) {
   return(heatmap.2(mt,
-                   ColSideColors = brewer.pal(length(unique(col_labels)),
+                   ColSideColors = brewer.pal(n_distinct(col_labels),
                                               'Accent')[col_labels],
                    scale = 'none', trace = 'none', density.info = 'none',
                    col = col, ...))
@@ -367,20 +371,26 @@ heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
 
 ### segmer plot
 
-visualize_segments <- function(site_csv, mv_csv, seg_csv, dmrmv_csv, dst_dir,
-                               n_cpu = detectCores(), width = 13, height = 8) {
+fetch_csv_prefix <- function(path, replacement = '', bed = FALSE) {
+  return(str_replace(basename(path),
+                     str_c(ifelse(bed, '(|.bed)', ''), '.csv(|.gz|.bz2)$'),
+                     replacement))
+}
+
+visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
+                               dst_dir, n_cpu = detectCores(), width = 13,
+                               height = 8, palette = 'nejm') {
   df_site <- read_site_csv(site_csv)
   df_mv_raw <- read_met_csv(mv_csv, dropna = FALSE)
   df_mv <- drop_na(df_mv_raw)
   out_prefix <- file.path(dst_dir,
-                          str_c(sub('.csv(|.gz|.bz2)$', '', basename(mv_csv)),
-                                sub('(|.bed).csv(|.gz|.bz2)$', '',
-                                    basename(site_csv)),
+                          str_c(fetch_csv_prefix(mv_csv),
+                                fetch_csv_prefix(site_csv, bed = TRUE),
                                 sep = '.'))
 
-  hist_pdf <- str_c(out_prefix, '.hist.pdf')
-  message('>>> Plot an M-value histogram:\t', hist_pdf)
-  to_pdf(plot(gghistogram(rbind(tibble(probe = 'unmasked',
+  mv_hist_pdf <- str_c(out_prefix, '.hist.pdf')
+  message('>>> Plot an M-value histogram:\t', mv_hist_pdf)
+  to_pdf(plot(gghistogram(rbind(tibble(probe = 'used',
                                        mv = df2num(filter(df_mv,
                                                           name %in%
                                                             df_site$name))),
@@ -390,11 +400,11 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, dmrmv_csv, dst_dir,
                                                             df_site$name)))),
                           x = 'mv', fill = 'probe', position = 'stack',
                           color = NA, alpha = 0.6,
-                          palette = get_palette('nejm', 2), xlab = 'M-value',
+                          palette = get_palette(palette, 2), xlab = 'M-value',
                           ylab = str_c('site count  (total: ', nrow(df_mv),
                                        ')'),
                           bins = 30, legend = 'right')),
-         path = hist_pdf, w = width, h = height)
+         path = mv_hist_pdf, w = width, h = height)
 
   cl <- makeCluster(n_cpu)
   df_p <- inner_join(df_site,
@@ -420,45 +430,76 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, dmrmv_csv, dst_dir,
          },
          ylim = c(0, max(df_p$mlogp) * 1.1))
 
-  df_seg <- read_csv_quietly(path = seg_csv)
-  hist_pdf <- file.path(dst_dir, sub('.csv(|.gz|.bz2)$', '.hist.pdf',
-                                     basename(seg_csv)))
-  message('>>> Plot segmental histograms:\t', hist_pdf)
-  segment2len <- function(s) return(1 - eval(parse(text = sub('^.*:', '', s))))
-  ylab <-  str_c('segment count  (total: ', n_distinct(df_seg$segment), ')')
-  g1 <- list(gghistogram(summarize(group_by(df_seg, segment),
-                                   n = n_distinct(name),
-                                   .groups = 'drop'),
-                         x = 'n', fill = 'navy', color = NA, alpha = 0.4,
-                         xscale = 'log10',
-                         xlab = str_c('site count per segment  (total: ',
-                                      n_distinct(df_seg$name), ')'),
-                         ylab = ylab, bins = 30) +
-             theme(plot.margin = margin(1, 2.5, 1, 1, 'lines')),
-             gghistogram(mutate(distinct(df_seg, segment),
-                                len = sapply(segment, segment2len)),
-                         x = 'len', fill = 'navy', color = NA, alpha = 0.4,
-                         xlab = 'segment bp length', ylab = ylab, bins = 30) +
-             scale_x_log10(labels = format_digit) +
-             theme(plot.margin = margin(1, 2.5, 1, 1, 'lines')))
-  to_pdf(plot(ggarrange(plotlist = g1, nrow = 2)),
-         path = hist_pdf, w = width, h = height)
+  df_dmrmv <- read_csv_quietly(dmrmv_csv)
+  df_ndmrmv <- filter(read_csv_quietly(segmv_csv),
+                      ! segment %in% df_dmrmv$segment)
+  df_seg <- mutate(read_csv_quietly(seg_csv),
+                   DMR = (segment %in% df_dmrmv$segment))
+  seg_hist_pdf <- file.path(dst_dir,
+                            fetch_csv_prefix(dmrmv_csv,
+                                             replacement = '.hist.pdf'))
+  message('>>> Plot segmental histograms:\t', seg_hist_pdf)
+  n_site_used <- n_distinct(df_seg$name)
+  n_seg <- n_distinct(df_seg$segment)
+  seg_ylab <-  str_c('segment count  (total: ', n_seg, ')')
+  gs <- lapply(list(gghistogram(summarize(group_by(df_seg, segment, DMR),
+                                          n = n_distinct(name),
+                                          .groups = 'drop'),
+                                x = 'n', fill = 'DMR', color = NA, alpha = 0.6,
+                                palette = get_palette(palette, 2),
+                                position = 'stack', xscale = 'log10',
+                                title = 'Probe site',
+                                xlab = str_c('site count per segment',
+                                             '  (total: ', n_site_used, ')'),
+                                ylab = seg_ylab, bins = 30, legend = 'right'),
+                    gghistogram(rbind(tibble(v = df2num(df_dmrmv), DMR = TRUE),
+                                      tibble(v = df2num(df_ndmrmv),
+                                             DMR = FALSE)),
+                                x = 'v', fill = 'DMR', color = NA, alpha = 0.6,
+                                palette = get_palette(palette, 2),
+                                position = 'stack', title = 'Segment M-value',
+                                xlab = 'median M-value per segment',
+                                ylab = str_c('count  (', n_site_used,
+                                             ' sites x ', ncol(df_dmrmv) - 1,
+                                             ' samples)'),
+                                bins = 30, legend = 'right'),
+                    gghistogram(mutate(distinct(df_seg, segment, DMR),
+                                       len = sapply(segment, segment2len)),
+                                x = 'len', fill = 'DMR', color = NA,
+                                alpha = 0.6, palette = get_palette(palette, 2),
+                                position = 'stack', xscale = 'log10',
+                                title = 'Segment length',
+                                xlab = 'segment bp length', ylab = seg_ylab,
+                                bins = 30, legend = 'right'),
+                    gghistogram(rbind(mutate(row2var(df_dmrmv), DMR = TRUE),
+                                      mutate(row2var(df_ndmrmv), DMR = FALSE)),
+                                x = 'variance', fill = 'DMR', color = NA,
+                                alpha = 0.6, palette = get_palette(palette, 2),
+                                position = 'stack',
+                                title = 'Variance of segment M-value',
+                                xlab = 'M-value variance per segment',
+                                ylab = seg_ylab, bins = 30, legend = 'right')),
+               function(g) {
+                 return(g + theme(plot.margin = margin(1, 1, 1, 1, 'lines')))
+               })
+  to_pdf(plot(ggarrange(plotlist = gs, common.legend = TRUE,
+                        legend = 'right')),
+         path = seg_hist_pdf, w = width, h = height)
 
   feature_csv <- file.path(dst_dir,
-                           sub('.csv(|.gz|.bz2)$', '.feature.csv',
-                               basename(dmrmv_csv)))
+                           fetch_csv_prefix(dmrmv_csv,
+                                            replacement = '.feature.csv'))
   message('>>> Write feature counts:\t', feature_csv)
   df_feature <- tibble(feature = c('differentially methylated segments',
                                    'determined segments',
                                    'available filtered sites',
                                    'filtered sites', 'probe sites'),
-                       count = c(nrow(read_csv_quietly(dmrmv_csv)),
-                                 length(unique(df_seg$segment)), nrow(df_seg),
-                                 sum(df_site$name %in% df_mv_raw$name),
+                       count = c(nrow(df_dmrmv), n_seg, n_site_used,
+                                 sum(df_mv_raw$name %in% df_site$name),
                                  nrow(df_mv_raw)))
   write_csv(df_feature, path = feature_csv)
 
-  feature_pdf <- sub('.csv$', '.pdf', feature_csv)
+  feature_pdf <- str_replace(feature_csv, '.csv$', '.pdf')
   message('>>> Plot feature counts:\t', feature_csv)
   to_pdf(plot(ggbarplot(df_feature, x = 'feature', y = 'count', fill = 'navy',
                         color = 'navy', alpha = 0.4, orientation = 'horiz',
@@ -467,6 +508,10 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, dmrmv_csv, dst_dir,
               labs(x = element_blank(), y = 'feature count') +
               theme(plot.margin = margin(1, 2.5, 1, 1, 'lines'))),
          path = feature_pdf, w = width, h = height)
+}
+
+segment2len <- function(s) {
+  return(1 - eval(parse(text = str_replace(s, '^.*:', ''))))
 }
 
 df2num <- function(df) {
@@ -483,16 +528,15 @@ format_digit <- function(i) {
 write_dmp_mv <- function(mv_csv, site_csv, dst_dir, kmeans_k = 4,
                          sd_cutoff = NULL) {
   df_site <- read_site_csv(site_csv)
-  df_mv <- filter(read_met_csv(path = mv_csv), name %in% df_site$name)
+  df_mv <- filter(read_met_csv(mv_csv), name %in% df_site$name)
   df_dmpmv <- filter(df_mv,
                      name %in% filter_by_sd(df_mv,
                                             kmeans_k = kmeans_k,
                                             sd_cutoff = sd_cutoff)$name)
   message('DMP sites:\t', nrow(df_dmpmv), ' / ', nrow(df_mv))
   dmp_csv <- file.path(dst_dir,
-                       str_c(sub('.csv(|.gz|.bz2)$', '', basename(mv_csv)),
-                             sub('(|.bed).csv(|.gz|.bz2)$', '',
-                                 basename(site_csv)),
+                       str_c(fetch_csv_prefix(mv_csv),
+                             fetch_csv_prefix(site_csv, bed = TRUE),
                              'mv.dmp.csv', sep = '.'))
   message('>>> Write DMP value CSV:\t', dmp_csv)
   write_csv(df_dmpmv, path = dmp_csv)
@@ -610,6 +654,6 @@ to_pdf <- function(graph, path, w = 10, h = 10) {
 
 if (! interactive()) {
   library('docopt', quietly = TRUE)
-  main(opts = docopt::docopt(gsub('\\]\n +\\[', '\\] \\[', doc),
+  main(opts = docopt::docopt(gsub('\n {8,}([\\[<])', ' \\1', doc),
                              version = command_version))
 }
