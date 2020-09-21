@@ -10,8 +10,8 @@ Usage:
                  [--ar=<ratio>] [--out=<dir>] <dmrmv_csv>
   segmer plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv> <seg_csv>
               <segmv_csv> <dmrmv_csv>
-  segmer dmp [-v] [--sd-cutoff=<dbl>] [--kmeans-k=<int>] [--out=<dir>]
-             <site_csv> <mv_csv>
+  segmer dmp [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--kmeans-k=<int>]
+             [--out=<dir>] <site_csv> <mv_csv>
   segmer idat2m [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer idat2beta [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer --session
@@ -295,12 +295,14 @@ read_met_csv <- function(path, dropna = TRUE) {
   return(mutate(dplyr::rename(d, name = 1), name = as.character(name)))
 }
 
-filter_by_sd <- function(df_v, kmeans_k = 2, sd_cutoff = NULL, ...) {
+filter_by_sd <- function(df_v, kmeans_k = 2, sd_cutoff = NULL,
+                         kmeans_iter_max = 100) {
   df_var <- row2var(df_v)
   if (is.null(sd_cutoff)) {
     message('>>> Determine the variance threshold using K-means (k = ',
             kmeans_k, ')')
-    km <- kmeans(df_var$variance, centers = kmeans_k, ...)
+    km <- kmeans(df_var$variance, centers = kmeans_k,
+                 iter.max = kmeans_iter_max)
     df_k <- tibble(v = df_var$variance,
                    label = km$cluster,
                    is_highest = (km$cluster ==
