@@ -4,13 +4,13 @@
 
 Usage:
   segmer bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
-  segmer dmr [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--kmeans-k=<int>]
-             [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv>
+  segmer dmr [-v] [--kmeans-k=<int>] [--sd-cutoff=<dbl>] [--seed=<int>]
+             [--cpus=<int>] [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv>
   segmer cluster [-v] [--cutree-k=<int>] [--hclust=<str>] [--dist=<str>]
                  [--ar=<ratio>] [--out=<dir>] <dmrmv_csv>
-  segmer plot [-v] [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv> <seg_csv>
-              <segmv_csv> <dmrmv_csv>
-  segmer dmp [-v] [--seed=<int>] [--sd-cutoff=<dbl>] [--kmeans-k=<int>]
+  segmer plot [-v] [--cpus=<int>] [--ar=<ratio>] [--out=<dir>] <site_csv>
+              <mv_csv> <seg_csv> <segmv_csv> <dmrmv_csv>
+  segmer dmp [-v] [--kmeans-k=<int>] [--sd-cutoff=<dbl>] [--seed=<int>]
              [--out=<dir>] <site_csv> <mv_csv>
   segmer idat2m [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer idat2beta [-v] [--offset=<dbl>] <idat_dir> <out_csv>
@@ -33,9 +33,10 @@ Options:
                         choice: EPIC, hm450, hm27
   --unfilter          Skip recommended probe filtering
   --out=<dir>         Specify an output directory [default: .]
-  --seed=<int>        Specify a random seed
-  --sd-cutoff=<dbl>   Specify the SD cutoff
   --kmeans-k=<int>    Specify the number of clusters for K-means [default: 4]
+  --sd-cutoff=<dbl>   Use a fixed SD cutoff
+  --seed=<int>        Specify a random seed
+  --cpus=<int>        Limit the CPU cores to be used
   --cutree-k=<int>    Specify the number of sample clusters [default: 3]
   --hclust=<str>      Specify the method of stats::hclust [default: ward.D2]
   --dist=<str>        Specify the method of stats::dist [default: euclidean]
@@ -74,8 +75,6 @@ load_packages <- function(opts) {
     add_pkgs <- c('gplots', 'RColorBrewer')
   } else if (opts[['plot']]) {
     add_pkgs <- c('ggpubr', 'parallel')
-  } else if (opts[['dmp']]) {
-    add_pkgs <- 'parallel'
   } else if (opts[['idat2m']] | opts[['idat2beta']]) {
     add_pkgs <- c('IlluminaHumanMethylationEPICmanifest', 'minfi')
   } else {
@@ -108,6 +107,14 @@ main <- function(opts) {
       set.seed(opts[['--seed']])
       message(opts[['--seed']])
     }
+    if (opts[['dmr']] | opts[['plot']]) {
+      message('>>> Set the number of CPU cores')
+      n_cpu <- ifelse(is.null(opts[['--cpus']]), parallel::detectCores(),
+                      as.integer(opts[['--cpus']]))
+      message(n_cpu)
+    } else {
+      n_cpu <- 1
+    }
 
     if (opts[['bed']]) {
       prepare_site_csv(dst_dir = opts[['--out']],
@@ -117,7 +124,7 @@ main <- function(opts) {
       segment_sites(site_csv = opts[['<site_csv>']],
                     mv_csv = opts[['<mv_csv>']], dst_dir = opts[['--out']],
                     kmeans_k = opts[['--kmeans-k']],
-                    sd_cutoff = opts[['--sd-cutoff']])
+                    sd_cutoff = opts[['--sd-cutoff']], n_cpu = n_cpu)
     } else if (opts[['cluster']]) {
       cluster_segments(dmrmv_csv = opts[['<dmrmv_csv>']],
                        dst_dir = opts[['--out']],
@@ -132,7 +139,7 @@ main <- function(opts) {
                          segmv_csv = opts[['<segmv_csv>']],
                          dmrmv_csv = opts[['<dmrmv_csv>']],
                          dst_dir = opts[['--out']], width = aspect_ratio[1],
-                         height = aspect_ratio[2])
+                         height = aspect_ratio[2], n_cpu = n_cpu)
     } else if (opts[['dmp']]) {
       write_dmp_mv(mv_csv = opts[['<mv_csv>']],
                    site_csv = opts[['<site_csv>']], dst_dir = opts[['--out']],
@@ -249,13 +256,13 @@ segment_sites <- function(site_csv, mv_csv, dst_dir, kmeans_k = 2,
   message('>>> Write a segment CSV:\t', seg_csv)
   write_csv(df_seg, path = seg_csv)
 
-  message('>>> Calculate segmental median values')
+  message('>>> Calculate segmental mean values')
   df_segmv <- summarize_all(group_by(select(left_join(select(df_seg,
                                                              name, segment),
                                                       df_mv, by = 'name'),
                                             -name),
                                      segment),
-                            median,
+                            mean,
                             .groups = 'drop')
   out_prefix <- file.path(dst_dir,
                           fetch_csv_prefix(seg_csv, replacement = '.mv'))
@@ -460,7 +467,7 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
                                 x = 'v', fill = 'DMR', color = NA, alpha = 0.6,
                                 palette = get_palette(palette, 2),
                                 position = 'stack', title = 'Segment M-value',
-                                xlab = 'median M-value per segment',
+                                xlab = 'mean M-value per segment',
                                 ylab = str_c('count  (', n_site_used,
                                              ' sites x ', ncol(df_dmrmv) - 1,
                                              ' samples)'),
