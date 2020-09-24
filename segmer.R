@@ -5,24 +5,26 @@
 Usage:
   segmer bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
   segmer dmr [-v] [--kmeans-k=<int>] [--sd-cutoff=<dbl>] [--seed=<int>]
-             [--cpus=<int>] [--ar=<ratio>] [--out=<dir>] <site_csv> <mv_csv>
-  segmer cluster [-v] [--cutree-k=<int>] [--hclust=<str>] [--dist=<str>]
-                 [--ar=<ratio>] [--out=<dir>] <dmrmv_csv>
-  segmer plot [-v] [--cpus=<int>] [--ar=<ratio>] [--out=<dir>] <site_csv>
-              <mv_csv> <seg_csv> <segmv_csv> <dmrmv_csv>
+             [--cpus=<int>] [--out=<dir>] <site_csv> <mv_csv>
+  segmer clust [-v] [--cutree-k=<int>] [--hclust=<str>] [--dist=<str>]
+               [--ar=<ratio>] [--out=<dir>] <dmrmv_csv>
+  segmer stats [-v] [--cpus=<int>] [--ar=<ratio>] [--out=<dir>] <site_csv>
+               <mv_csv> <seg_csv> <segmv_csv>
+  segmer loc [-v] [--ar=<ratio>] [--out=<dir>] <mv_csv> <seg_csv> <region>...
   segmer dmp [-v] [--kmeans-k=<int>] [--sd-cutoff=<dbl>] [--seed=<int>]
              [--out=<dir>] <site_csv> <mv_csv>
   segmer idat2m [-v] [--offset=<dbl>] <idat_dir> <out_csv>
   segmer idat2beta [-v] [--offset=<dbl>] <idat_dir> <out_csv>
-  segmer --session
+  segmer [-v] --session
   segmer --version
   segmer -h|--help
 
 Commands:
   bed                 Download annotation data and write a target site CSV file
   dmr                 Segment target sites (Sites including NA are ignored.)
-  cluster             Execute clustering and draw the heatmap
-  plot                Visualize methylation data
+  clust               Execute clustering and draw the heatmap
+  stats               Visualize the result of segmentation
+  loc                 Visualize segments on the specified local region
   dmp                 Determine differentially methylated positions
   idat2m              Calculate M-values using IDAT files from Illumina methylation arrays
   idat2beta           Calculate beta-values using IDAT files from Illumina methylation arrays
@@ -56,11 +58,12 @@ Arguments:
   <dmrmv_csv>         Path to a M-value CSV file of DMRs or DMPs
                       (`*.seg.mv.dmr.csv` created by `segmer dmr`)
   <seg_csv>           Path to a segment CSV file (`*.seg.csv` created by `segmer dmr`)
+  <region>            A chromosomal region (<chromosome>:<start_position>-<end_position>)
   <idat_dir>          Path to an directory including IDAT files
   <out_csv>           Path to an output CSV file
 ' -> doc
 
-command_version <- 'v0.1.0'
+command_version <- 'v0.1.1'
 
 
 ### controler
@@ -71,10 +74,12 @@ load_packages <- function(opts) {
     add_pkgs <- 'GenomicRanges'
   } else if (opts[['dmr']]) {
     add_pkgs <- c('changepoint', 'parallel')
-  } else if (opts[['cluster']]) {
+  } else if (opts[['clust']]) {
     add_pkgs <- c('gplots', 'RColorBrewer')
-  } else if (opts[['plot']]) {
+  } else if (opts[['stats']]) {
     add_pkgs <- c('ggpubr', 'parallel')
+  } else if (opts[['loc']]) {
+    add_pkgs <- 'ggpubr'
   } else if (opts[['idat2m']] | opts[['idat2beta']]) {
     add_pkgs <- c('IlluminaHumanMethylationEPICmanifest', 'minfi')
   } else {
@@ -95,19 +100,12 @@ main <- function(opts) {
                                           'RColorBrewer', 'tidyverse')))
   } else {
     load_packages(opts = opts)
-    make_dir(opts[['--out']])
-    if (opts[['cluster']] | opts[['plot']]) {
-      aspect_ratio <- as.integer(str_split(opts[['--ar']], pattern = ':',
-                                           n = 2, simplify = TRUE))
-    } else {
-      aspect_ratio <- NULL
-    }
     if (! is.null(opts[['--seed']])) {
       message('>>> Set a random seed')
       set.seed(opts[['--seed']])
       message(opts[['--seed']])
     }
-    if (opts[['dmr']] | opts[['plot']]) {
+    if (opts[['dmr']] | opts[['stats']]) {
       message('>>> Set the number of CPU cores')
       n_cpu <- ifelse(is.null(opts[['--cpus']]), parallel::detectCores(),
                       as.integer(opts[['--cpus']]))
@@ -115,6 +113,7 @@ main <- function(opts) {
     } else {
       n_cpu <- 1
     }
+    make_dir(opts[['--out']])
 
     if (opts[['bed']]) {
       prepare_site_csv(dst_dir = opts[['--out']],
@@ -125,21 +124,26 @@ main <- function(opts) {
                     mv_csv = opts[['<mv_csv>']], dst_dir = opts[['--out']],
                     kmeans_k = opts[['--kmeans-k']],
                     sd_cutoff = opts[['--sd-cutoff']], n_cpu = n_cpu)
-    } else if (opts[['cluster']]) {
+    } else if (opts[['clust']]) {
       cluster_segments(dmrmv_csv = opts[['<dmrmv_csv>']],
                        dst_dir = opts[['--out']],
                        cutree_k = opts[['--cutree-k']],
                        dist_method = opts[['--dist']],
                        hclust_method = opts[['--hclust']],
-                       width = aspect_ratio[1], height = aspect_ratio[2])
-    } else if (opts[['plot']]) {
+                       aspect_ratio = opts[['--ar']])
+    } else if (opts[['stats']]) {
       visualize_segments(site_csv = opts[['<site_csv>']],
                          mv_csv = opts[['<mv_csv>']],
                          seg_csv = opts[['<seg_csv>']],
                          segmv_csv = opts[['<segmv_csv>']],
-                         dmrmv_csv = opts[['<dmrmv_csv>']],
-                         dst_dir = opts[['--out']], width = aspect_ratio[1],
-                         height = aspect_ratio[2], n_cpu = n_cpu)
+                         dst_dir = opts[['--out']],
+                         aspect_ratio = opts[['--ar']], n_cpu = n_cpu)
+    } else if (opts[['loc']]) {
+      visualize_local_regions(mv_csv = opts[['<mv_csv>']],
+                              seg_csv = opts[['<seg_csv>']],
+                              dst_dir = opts[['--out']],
+                              regions = opts[['<region>']],
+                              aspect_ratio = opts[['--ar']])
     } else if (opts[['dmp']]) {
       write_dmp_mv(mv_csv = opts[['<mv_csv>']],
                    site_csv = opts[['<site_csv>']], dst_dir = opts[['--out']],
@@ -253,8 +257,6 @@ segment_sites <- function(site_csv, mv_csv, dst_dir, kmeans_k = 2,
                        str_c(fetch_csv_prefix(mv_csv),
                              fetch_csv_prefix(site_csv, bed = TRUE),
                              'seg.csv', sep = '.'))
-  message('>>> Write a segment CSV:\t', seg_csv)
-  write_csv(df_seg, path = seg_csv)
 
   message('>>> Calculate segmental mean values')
   df_segmv <- summarize_all(group_by(select(left_join(select(df_seg,
@@ -264,8 +266,7 @@ segment_sites <- function(site_csv, mv_csv, dst_dir, kmeans_k = 2,
                                      segment),
                             mean,
                             .groups = 'drop')
-  out_prefix <- file.path(dst_dir,
-                          fetch_csv_prefix(seg_csv, replacement = '.mv'))
+  out_prefix <- file.path(dst_dir, fetch_csv_prefix(seg_csv, suffix = '.mv'))
   segmv_csv <- str_c(out_prefix, '.all.csv')
   message('>>> Write a segmental value CSV:\t', segmv_csv)
   write_csv(df_segmv, path = segmv_csv)
@@ -278,6 +279,10 @@ segment_sites <- function(site_csv, mv_csv, dst_dir, kmeans_k = 2,
   message('>>> Write a DMR segmental value CSV:\t', dmrmv_csv)
   write_csv(df_dmrmv, path = dmrmv_csv)
   message('DMR segments:\t', nrow(df_dmrmv), ' / ', nrow(df_segmv))
+
+  message('>>> Write a segment CSV:\t', seg_csv)
+  write_csv(mutate(df_seg, DMR = segment %in% df_dmrmv$segment),
+            path = seg_csv)
 }
 
 read_site_csv <- function(path) {
@@ -331,12 +336,13 @@ row2var <- function(df_v) {
   return(mutate(select(df_v, 1), variance = apply(select(df_v, -1), 1, var)))
 }
 
-### segmer cluster
+### segmer clust
 
 cluster_segments <- function(dmrmv_csv, dst_dir, cutree_k = 3,
                              dist_method = 'euclidean',
-                             hclust_method = 'ward.D2', width = 13,
-                             height = 8) {
+                             hclust_method = 'ward.D2',
+                             aspect_ratio = '13:8') {
+  ar <- parse_aspect_ratio(aspect_ratio)
   stopifnot(cutree_k > 1)
   distfun <- function(...) return(dist(..., method = dist_method))
   hclustfun <- function(...) return(hclust(..., method = hclust_method))
@@ -365,7 +371,7 @@ cluster_segments <- function(dmrmv_csv, dst_dir, cutree_k = 3,
                                           ' segment', ' site'),
                                    '  (total: ', nrow(mt_dmr), ')'),
                       margins = c(6, 10)),
-         path = heatmap_pdf, w = width, h = height)
+         path = heatmap_pdf, w = ar$width, h = ar$height)
 }
 
 heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
@@ -378,17 +384,18 @@ heatmap_plot <- function(mt, col_labels, col = rev(brewer.pal(9, 'RdBu')),
 }
 
 
-### segmer plot
+### segmer stats
 
-fetch_csv_prefix <- function(path, replacement = '', bed = FALSE) {
+fetch_csv_prefix <- function(path, suffix = '', bed = FALSE) {
   return(str_replace(basename(path),
                      str_c(ifelse(bed, '(|.bed)', ''), '.csv(|.gz|.bz2)$'),
-                     replacement))
+                     suffix))
 }
 
-visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
-                               dst_dir, n_cpu = detectCores(), width = 13,
-                               height = 8, palette = 'nejm') {
+visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dst_dir,
+                               n_cpu = detectCores(), aspect_ratio = '13:8',
+                               palette = 'nejm') {
+  ar <- parse_aspect_ratio(aspect_ratio)
   df_site <- read_site_csv(site_csv)
   df_mv_raw <- read_met_csv(mv_csv, dropna = FALSE)
   df_mv <- drop_na(df_mv_raw)
@@ -413,7 +420,7 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
                           ylab = str_c('site count  (total: ', nrow(df_mv),
                                        ')'),
                           bins = 30, legend = 'right')),
-         path = mv_hist_pdf, w = width, h = height)
+         path = mv_hist_pdf, w = ar$width, h = ar$height)
 
   cl <- makeCluster(n_cpu)
   df_p <- inner_join(df_site,
@@ -427,26 +434,21 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
          function(n, ylim) {
            p <- str_c(out_prefix, 'shapiro_wilk', n, 'pdf', sep = '.')
            message('>>> Plot p-values from Shapiro-Wilk normality tests:\t', p)
-           d <- filter(df_p, chrom == n)
-           to_pdf(plot(ggscatter(d, x = 'chromStart', y = 'mlogp',
-                                 color = 'navy', alpha = 0.4, size = 0.1,
-                                 ylim = ylim,
+           d <- mutate(filter(df_p, chrom == n), pos = chromStart + 1)
+           to_pdf(plot(ggscatter(d, x = 'pos', y = 'mlogp', color = 'navy',
+                                 alpha = 0.4, size = 0.1, ylim = ylim,
                                  xlab = str_c('position on ', n, '  (',
                                               nrow(d), ' sites)'),
                                  ylab = '-log10(p-value)') +
                        scale_x_continuous(labels = format_digit)),
-                  path = p, w = width, h = height)
+                  path = p, w = ar$width, h = ar$height)
          },
          ylim = c(0, max(df_p$mlogp) * 1.1))
 
-  df_dmrmv <- read_csv_quietly(dmrmv_csv)
-  df_ndmrmv <- filter(read_csv_quietly(segmv_csv),
-                      ! segment %in% df_dmrmv$segment)
-  df_seg <- mutate(read_csv_quietly(seg_csv),
-                   DMR = (segment %in% df_dmrmv$segment))
-  seg_hist_pdf <- file.path(dst_dir,
-                            fetch_csv_prefix(dmrmv_csv,
-                                             replacement = '.hist.pdf'))
+  df_seg <- read_csv_quietly(seg_csv)
+  df_segmv <- read_csv_quietly(segmv_csv)
+  df_dmrmv <- filter(df_segmv, segment %in% filter(df_seg, DMR)$segment)
+  seg_hist_pdf <- str_c(out_prefix, '.seg.mv.dmr.hist.pdf')
   message('>>> Plot segmental histograms:\t', seg_hist_pdf)
   n_site_used <- n_distinct(df_seg$name)
   n_seg <- n_distinct(df_seg$segment)
@@ -462,7 +464,9 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
                                              '  (total: ', n_site_used, ')'),
                                 ylab = seg_ylab, bins = 30, legend = 'right'),
                     gghistogram(rbind(tibble(v = df2num(df_dmrmv), DMR = TRUE),
-                                      tibble(v = df2num(df_ndmrmv),
+                                      tibble(v = df2num(filter(df_segmv,
+                                                               ! segment %in%
+                                                                 df_dmrmv$segment)),
                                              DMR = FALSE)),
                                 x = 'v', fill = 'DMR', color = NA, alpha = 0.6,
                                 palette = get_palette(palette, 2),
@@ -480,8 +484,9 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
                                 title = 'Segment length',
                                 xlab = 'segment bp length', ylab = seg_ylab,
                                 bins = 30, legend = 'right'),
-                    gghistogram(rbind(mutate(row2var(df_dmrmv), DMR = TRUE),
-                                      mutate(row2var(df_ndmrmv), DMR = FALSE)),
+                    gghistogram(left_join(row2var(df_segmv),
+                                          select(df_seg, segment, DMR),
+                                          by = 'segment'),
                                 x = 'variance', fill = 'DMR', color = NA,
                                 alpha = 0.6, palette = get_palette(palette, 2),
                                 position = 'stack',
@@ -493,11 +498,9 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
                })
   to_pdf(plot(ggarrange(plotlist = gs, common.legend = TRUE,
                         legend = 'right')),
-         path = seg_hist_pdf, w = width, h = height)
+         path = seg_hist_pdf, w = ar$width, h = ar$height)
 
-  feature_csv <- file.path(dst_dir,
-                           fetch_csv_prefix(dmrmv_csv,
-                                            replacement = '.feature.csv'))
+  feature_csv <- str_c(out_prefix, '.seg.mv.dmr.feature.csv')
   message('>>> Write feature counts:\t', feature_csv)
   df_feature <- tibble(feature = c('differentially methylated segments',
                                    'determined segments',
@@ -516,7 +519,7 @@ visualize_segments <- function(site_csv, mv_csv, seg_csv, segmv_csv, dmrmv_csv,
               scale_y_continuous(limits = c(0, max(df_feature$count) * 1.1)) +
               labs(x = element_blank(), y = 'feature count') +
               theme(plot.margin = margin(1, 2.5, 1, 1, 'lines'))),
-         path = feature_pdf, w = width, h = height)
+         path = feature_pdf, w = ar$width, h = ar$height)
 }
 
 segment2len <- function(s) {
@@ -529,6 +532,60 @@ df2num <- function(df) {
 
 format_digit <- function(i) {
   return(format(i, scientific = FALSE))
+}
+
+### segmer loc
+
+visualize_local_regions <- function(mv_csv, seg_csv, dst_dir, regions,
+                                    aspect_ratio = '13:8', palette = 'nejm') {
+  ar <- parse_aspect_ratio(aspect_ratio)
+  df_mv <- read_met_csv(mv_csv)
+  df_seg <- read_csv_quietly(seg_csv)
+  out_prefix <- file.path(dst_dir, fetch_csv_prefix(seg_csv))
+  for (r in regions) {
+    message('>>> Extract M-values and segments on a region:\t', r)
+    reg <- parse_region(r)
+    df_regseg <- filter(df_seg, chrom == reg$chr,
+                        chromStart >= (reg$start - 1), chromEnd <= reg$end)
+    if (nrow(df_regseg) == 0) {
+      message('>>> No values on a region:\t', r)
+    } else {
+      df_regmvl <- left_join(pivot_longer(filter(df_mv,
+                                                 name %in%
+                                                   df_regseg$name),
+                                          -name, names_to = 'sample_id',
+                                          values_to = 'm_value'),
+                             df_regseg, by = 'name')
+      df_dmr <- summarize(group_by(df_regseg, segment, DMR, chrom),
+                          pos_start = min(chromStart) + 1,
+                          pos_end = max(chromEnd),
+                          .groups = 'drop')
+      region_pdf <- str_c(out_prefix, str_c(reg, collapse = '_'), 'pdf',
+                          sep = '.')
+      message('>>> Plot M-values and segments:\t', region_pdf)
+      to_pdf(plot(set_palette((ggplot() +
+                               geom_point(data = mutate(df_regmvl,
+                                                        pos = chromStart + 1),
+                                          mapping = aes(x = pos, y = m_value),
+                                          size = 0.2, color = 'navy',
+                                          alpha = 0.4) +
+                               geom_rect(data = df_dmr,
+                                         mapping =  aes(xmin = pos_start,
+                                                        xmax = pos_end + 1,
+                                                        fill = DMR,
+                                                        ymin = -Inf,
+                                                        ymax = Inf),
+                                         size = 0.1, linetype = 'dotted',
+                                         alpha = 0.2, color = 'grey') +
+                               labs(x = str_c('position on ', reg$chr, '  (',
+                                              nrow(df_regmvl), ' sites)'),
+                                    y = 'M-value') +
+                               scale_x_continuous(labels = format_digit) +
+                               theme_pubr()),
+                              palette = get_palette(palette, 2))),
+             path = region_pdf, w = ar$width, h = ar$height)
+    }
+  }
 }
 
 
@@ -552,7 +609,7 @@ write_dmp_mv <- function(mv_csv, site_csv, dst_dir, kmeans_k = 4,
 }
 
 
-### idat2m
+### segmer idat2m
 
 convert_idat_to_mv <- function(idat_dir, out_csv, offset = 1) {
   message('>>> Read IDAT files and calculate M-values:\t', idat_dir)
@@ -588,7 +645,7 @@ calculate_mv_from_idat <- function(idat_name, offset = 1) {
                             var = 'name'))
 }
 
-### idat2beta
+### segmer idat2beta
 
 convert_idat_to_bv <- function(idat_dir, out_csv, offset = 100) {
   message('>>> Read IDAT files and calculate beta-values:\t', idat_dir)
@@ -656,6 +713,20 @@ to_pdf <- function(graph, path, w = 10, h = 10) {
   pdf(path, width = w, height = h, onefile = FALSE)
   graph
   dev.off()
+}
+
+parse_aspect_ratio <- function(aspect_ratio) {
+  return(setNames(as.list(as.integer(str_split(aspect_ratio, pattern = ':',
+                                               n = 2, simplify = TRUE))),
+                  c('width', 'height')))
+}
+
+parse_region <- function(region) {
+  rl <- as.list(str_split(region, pattern = '[:\\-]', n = 3, simplify = TRUE))
+  reg <- list(chr = rl[[1]], start = as.integer(rl[[2]]),
+              end = as.integer(rl[[3]]))
+  stopifnot(reg$start <= reg$end)
+  return(reg)
 }
 
 
