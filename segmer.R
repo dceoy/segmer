@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-'Segment Detector for differentially methylated regions in methylome data
+'Differentially methylated segment detector for methylation array data
 
 Usage:
   segmer bed [-v] [--platform=<str>] [--unfilter] [--out=<dir>]
