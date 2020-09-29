@@ -190,8 +190,10 @@ prepare_site_csv <- function(dst_dir, platform = 'EPIC', unfilter = FALSE,
   write_csv(select(mutate(dplyr::rename(df_ann,
                                         chrom = seqnames, chromEnd = end),
                           chromStart = start - 1),
-                   chrom, chromStart, chromEnd, name, genesUniq, CGI,
-                   CGIposition),
+                   chrom, chromStart, chromEnd, name,
+                   any_of(c('width', 'strand', 'genesUniq', 'geneNames',
+                            'transcriptTypes', 'transcriptIDs', 'distToTSS',
+                            'CGI', 'CGIposition'))),
             path = site_csv)
 }
 
