@@ -10,6 +10,37 @@ Supporetd platforms:
   - hm450 (Infinium Human Methylation 450K BeadChip)
   - hm27 (Infinium HumanMethylation 27K BeadChip)
 
+Docker image
+------------
+
+Pull the image from [Docker Hub](https://hub.docker.com/r/dceoy/segmer/).
+
+```sh
+$ docker image pull dceoy/segmer
+```
+
+Installation
+------------
+
+1.  Install [clir](https://github.com/dceoy/clir).
+
+2.  Install dependencies.
+
+    ```sh
+    $ clir install --devt=cran changepoint gplots ggpubr RColorBrewer tidyverse
+    $ clir install --devt=bioc GenomicRanges IlluminaHumanMethylationEPICmanifest minfi
+    $ clir validate \
+        changepoint GenomicRanges gplots ggpubr \
+        IlluminaHumanMethylationEPICmanifest minfi RColorBrewer tidyverse
+    ```
+
+3.  Check out segmer.
+
+    ```sh
+    $ git clone https://github.com/dceoy/segmer.git
+    $ cp -a segmer/segmer.R /path/to/bin/
+    ```
+
 Usage
 -----
 
